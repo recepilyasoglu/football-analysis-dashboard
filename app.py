@@ -27,33 +27,37 @@ else:
     lig_sutunu = 'league' if 'league' in df.columns else df.columns[0]
     secilen_ligler = st.sidebar.multiselect("Lig Seç:", options=df[lig_sutunu].unique(), default=df[lig_sutunu].unique())
     
-    # Tüm gerekli kolonlar
+    # Temel Kolonlar
     sut_kolonu = 'shots' if 'shots' in df.columns else 'sh'
     gol_kolonu = 'goals' if 'goals' in df.columns else 'gls'
     xg_kolonu = 'xg'
     asist_kolonu = 'assists'
     xa_kolonu = 'xa'
     kp_kolonu = 'key_passes'
-    
-    # Yeni Savunma/Oyun Kurulumu Kolonları
     xgchain_kolonu = 'xgchain' if 'xgchain' in df.columns else 'xg_chain'
     xgbuildup_kolonu = 'xgbuildup' if 'xgbuildup' in df.columns else 'xg_buildup'
-    sure_kolonu = 'time' if 'time' in df.columns else 'min'
-
-    min_sure = st.sidebar.slider("Minimum Oynama Süresi (Dakika):", 0, 3000, 300, 50)
-
-    # Veriyi süreye ve lige göre filtrele
-    df_filtre = df[(df[lig_sutunu].isin(secilen_ligler))].copy()
     
+    # Süre kolonunu netleştiriyoruz (Understat'ta doğrudan 'time' olarak geçer)
+    sure_kolonu = 'time' if 'time' in df.columns else ('min' if 'min' in df.columns else None)
+
+    # Sidebar Süre Filtresi (Eğer süre kolonu bulunamazsa hata vermemesi için güvenli önlem)
+    if sure_kolonu and sure_kolonu in df.columns:
+        # Sayısal formata çevir
+        df[sure_kolonu] = pd.to_numeric(df[sure_kolonu], errors='coerce').fillna(0)
+        min_sure = st.sidebar.slider("Minimum Oynama Süresi (Dakika):", 0, 2500, 500, 100)
+        df_filtre = df[(df[lig_sutunu].isin(secilen_ligler)) & (df[sure_kolonu] >= min_sure)].copy()
+    else:
+        min_sure = 0
+        df_filtre = df[df[lig_sutunu].isin(secilen_ligler)].copy()
+        st.sidebar.warning("Oynama süresi (time) kolonu bulunamadı, süre filtresi atlandı.")
+
     # Sayısal dönüşümler
-    sayisal_kolonlar = [gol_kolonu, xg_kolonu, sut_kolonu, asist_kolonu, xa_kolonu, kp_kolonu, xgchain_kolonu, xgbuildup_kolonu, sure_kolonu]
+    sayisal_kolonlar = [gol_kolonu, xg_kolonu, sut_kolonu, asist_kolonu, xa_kolonu, kp_kolonu, xgchain_kolonu, xgbuildup_kolonu]
     for col in sayisal_kolonlar:
         if col in df_filtre.columns:
             df_filtre[col] = pd.to_numeric(df_filtre[col], errors='coerce').fillna(0)
         else:
             df_filtre[col] = 0
-
-    df_filtre = df_filtre[df_filtre[sure_kolonu] >= min_sure]
 
     df_filtre['bitiricilik_deltasi'] = (df_filtre[gol_kolonu] - df_filtre[xg_kolonu]).round(2)
     df_filtre['asist_deltasi'] = (df_filtre[asist_kolonu] - df_filtre[xa_kolonu]).round(2)
@@ -61,7 +65,7 @@ else:
     oyuncu_kolonu = 'player' if 'player' in df.columns else 'player_name'
     takim_kolonu = 'team' if 'team' in df.columns else 'team_title'
 
-    # --- YENİ 3 SEKME (TABS) YAPISI ---
+    # --- 3 SEKME (TABS) YAPISI ---
     tab1, tab2, tab3 = st.tabs(["🎯 Keskin Nişancılar", "🧠 10 Numaralar & Kanatlar", "🛡️ Gizli Kahramanlar (Stoper & 6 Numara)"])
 
     # SEKME 1: BİTİRİCİLİK
@@ -70,7 +74,7 @@ else:
         fig_gol = px.scatter(
             df_filtre.sort_values(by='bitiricilik_deltasi', ascending=False), 
             x=sut_kolonu, y='bitiricilik_deltasi', color=lig_sutunu, size=gol_kolonu,
-            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, gol_kolonu: True, xg_kolonu: True},
+            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, gol_kolonu: True, xg_kolonu: True, **({sure_kolonu: True} if sure_kolonu else {})},
             labels={sut_kolonu: 'Toplam Şut', 'bitiricilik_deltasi': 'Bitiricilik Deltası'},
             size_max=20, template='plotly_white'
         )
@@ -82,13 +86,13 @@ else:
         fig_asist = px.scatter(
             df_filtre.sort_values(by='asist_deltasi', ascending=False), 
             x=kp_kolonu, y='asist_deltasi', color=lig_sutunu, size=asist_kolonu,
-            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, asist_kolonu: True, xa_kolonu: True},
+            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, asist_kolonu: True, xa_kolonu: True, **({sure_kolonu: True} if sure_kolonu else {})},
             labels={kp_kolonu: 'Kilit Pas', 'asist_deltasi': 'Asist Deltası'},
             size_max=20, template='plotly_white'
         )
         st.plotly_chart(fig_asist, use_container_width=True)
 
-    # SEKME 3: GERİDEN OYUN KURMA (YENİ!)
+    # SEKME 3: GERİDEN OYUN KURMA
     with tab3:
         st.subheader("Oyun Kurulumuna Katkı: xGBuildup vs xGChain")
         st.markdown("""
@@ -100,7 +104,7 @@ else:
         fig_build = px.scatter(
             df_filtre.sort_values(by=xgbuildup_kolonu, ascending=False),
             x=xgbuildup_kolonu, y=xgchain_kolonu, color=lig_sutunu,
-            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, sure_kolonu: True},
+            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, **({sure_kolonu: True} if sure_kolonu else {})},
             labels={xgbuildup_kolonu: 'xGBuildup (Geriden Oyun Kurma)', xgchain_kolonu: 'xGChain (Toplam Atak Katkısı)'},
             template='plotly_white'
         )
@@ -108,6 +112,9 @@ else:
 
     # Alt Kısım: Genel Tablo
     st.subheader(f"📋 Kapsamlı Veri Tablosu ({len(df_filtre)} Oyuncu)")
-    gosterilecek_tablo = df_filtre[[oyuncu_kolonu, takim_kolonu, lig_sutunu, sure_kolonu, xgbuildup_kolonu, xgchain_kolonu, gol_kolonu, xg_kolonu, kp_kolonu, xa_kolonu]]
-    # Tabloyu varsayılan olarak Oyun Kurma (xGBuildup) gücüne göre sıralayalım
+    gosterilecek_sutunlar = [oyuncu_kolonu, takim_kolonu, lig_sutunu]
+    if sure_kolonu: gosterilecek_sutunlar.append(sure_kolonu)
+    gosterilecek_sutunlar.extend([xgbuildup_kolonu, xgchain_kolonu, gol_kolonu, xg_kolonu, kp_kolonu, xa_kolonu])
+    
+    gosterilecek_tablo = df_filtre[gosterilecek_sutunlar]
     st.dataframe(gosterilecek_tablo.sort_values(by=xgbuildup_kolonu, ascending=False), use_container_width=True)
