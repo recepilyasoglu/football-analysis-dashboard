@@ -87,7 +87,7 @@ else:
     takim_kolonu = 'team' if 'team' in df.columns else 'team_title'
 
     # --- 3 SEKME (TABS) YAPISI ---
-    tab1, tab2, tab3 = st.tabs(["🎯 Keskin Nişancılar", "🧠 10 Numaralar & Kanatlar", "🛡️ Gizli Kahramanlar (Stoper & 6 Numara)"])
+    tab1, tab2, tab3 = st.tabs(["🎯 Keskin Nişancılar", "🧠 10 Numaralar & Kanatlar", "🛡️ Gizli Kahramanlar (Stoper & 6-8 Numara)"])
 
     with tab1:
         st.subheader("Şut Hacmi vs Bitiricilik Deltası (U23 / Genç Odaklı)")
