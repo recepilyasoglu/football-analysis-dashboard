@@ -1,35 +1,15 @@
 import soccerdata as sd
 import pandas as pd
 
-def verileri_guncelle():
-    print("Understat üzerinden veri çekme işlemi başlatılıyor...")
-    
-    try:
-        # FBref yerine veri kaynağı olarak Understat'ı seçiyoruz
-        # Understat, doğrudan xG, Şut, Gol verilerine odaklıdır ve botlara çok daha ılımlı yaklaşır
-        understat = sd.Understat(
-            leagues=[
-                "ENG-Premier League", 
-                "ESP-La Liga", 
-                "ITA-Serie A", 
-                "GER-Bundesliga", 
-                "FRA-Ligue 1"
-            ], 
-            seasons="2026"  # Understat sezonu genellikle başlangıç yılıyla (2026) alır
-        )
-        
-        # Oyuncuların sezonluk istatistiklerini (şut, gol, xG vs. hepsi içindedir) çekiyoruz
-        print("İstatistikler indiriliyor, lütfen bekleyin...")
-        df_stats = understat.read_player_season_stats()
-        
-        # Veriyi düzleştirip CSV'ye kaydediyoruz
-        df_stats.reset_index(inplace=True)
-        df_stats.to_csv('otomatik_understat_verileri.csv', index=False)
-        
-        print("İşlem BAŞARILI! Veriler 'otomatik_understat_verileri.csv' dosyasına kaydedildi.")
-        
-    except Exception as e:
-        print(f"Veri çekilirken bir hata oluştu: {e}")
+print("Understat verileri çekiliyor...")
 
-if __name__ == "__main__":
-    verileri_guncelle()
+# Understat nesnesini başlatıyoruz
+u = sd.Understat(leagues=['ENG-Premier League', 'ESP-La Liga', 'ITA-Serie A', 'GER-Bundesliga', 'FRA-Ligue 1'], seasons=2026)
+
+# Doğru metod argümansız veya standart çağrılır
+df_shots = u.read_player_season_stats()
+df_shots.reset_index(inplace=True)
+
+# Kolon isimlerini kontrol edip kaydedelim
+df_shots.to_csv('otomatik_veri_cek.csv', index=False)
+print("BAŞARILI! 'otomatik_veri_cek.csv' dosyası güncellendi.")
