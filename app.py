@@ -37,19 +37,19 @@ else:
     xgchain_kolonu = 'xgchain' if 'xgchain' in df.columns else 'xg_chain'
     xgbuildup_kolonu = 'xgbuildup' if 'xgbuildup' in df.columns else 'xg_buildup'
     
-    # Süre kolonunu netleştiriyoruz (Understat'ta doğrudan 'time' olarak geçer)
-    sure_kolonu = 'time' if 'time' in df.columns else ('min' if 'min' in df.columns else None)
+    # Süre kolonunu olası tüm isim ihtimallerine karşı arayalım
+    olasi_sure_isimleri = ['time', 'min', 'mins', 'minutes', 'oynama_suresi']
+    sure_kolonu = next((col for col in olasi_sure_isimleri if col in df.columns), None)
 
-    # Sidebar Süre Filtresi (Eğer süre kolonu bulunamazsa hata vermemesi için güvenli önlem)
-    if sure_kolonu and sure_kolonu in df.columns:
-        # Sayısal formata çevir
+    # Sidebar Süre Filtresi
+    if sure_kolonu:
         df[sure_kolonu] = pd.to_numeric(df[sure_kolonu], errors='coerce').fillna(0)
-        min_sure = st.sidebar.slider("Minimum Oynama Süresi (Dakika):", 0, 2500, 500, 100)
+        min_sure = st.sidebar.slider("Minimum Oynama Süresi (Dakika):", 0, 2500, 400, 100)
         df_filtre = df[(df[lig_sutunu].isin(secilen_ligler)) & (df[sure_kolonu] >= min_sure)].copy()
     else:
         min_sure = 0
         df_filtre = df[df[lig_sutunu].isin(secilen_ligler)].copy()
-        st.sidebar.warning("Oynama süresi (time) kolonu bulunamadı, süre filtresi atlandı.")
+        st.sidebar.warning(f"Süre kolonu bulunamadı. Mevcut kolonlar: {list(df.columns[:6])}")
 
     # Sayısal dönüşümler
     sayisal_kolonlar = [gol_kolonu, xg_kolonu, sut_kolonu, asist_kolonu, xa_kolonu, kp_kolonu, xgchain_kolonu, xgbuildup_kolonu]
