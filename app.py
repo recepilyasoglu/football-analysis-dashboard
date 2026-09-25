@@ -1,28 +1,56 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
 
 # 1. Sayfa Ayarları
 st.set_page_config(page_title="Avrupa Scout Panosu", layout="wide")
 st.title("⚽ Avrupa Scout Analiz Panosu (2026/27)")
-st.markdown("Understat verileriyle güncellenen Forvet, 10 Numara, Oyun Kurucu ve **U23 Wonderkid** analizleri.")
+st.markdown("Understat istatistikleri ve dinamik yaş hesaplamasıyla entegre scout panosu.")
 
-# 2. Veri Yükleme
+# 2. Veri Yükleme ve Birleştirme (Join İşlemi)
 @st.cache_data
 def veri_yukle():
+    # Ana Fact Tablosu (Understat İstatistikleri)
     try:
-        df = pd.read_csv('otomatik_understat_verileri.csv')
-        return df
-    except Exception as e:
+        df_stats = pd.read_csv('otomatik_understat_verileri.csv')
+        df_stats.columns = [col.strip().lower() for col in df_stats.columns]
+    except Exception:
         return pd.DataFrame()
+
+    # Boyut Tablosu (Doğum Tarihleri)
+    try:
+        df_dates = pd.read_csv('oyuncu_dogum_tarihleri.csv')
+        df_dates.columns = ['player', 'birth_date']
+    except Exception:
+        # Eğer dosya henüz yoksa boş bir tablo oluştur
+        df_dates = pd.DataFrame(columns=['player', 'birth_date'])
+
+    # İki veriyi oyuncu ismine göre birleştiriyoruz (Left Join)
+    oyuncu_kolonu = 'player' if 'player' in df_stats.columns else 'player_name'
+    if not df_dates.empty and oyuncu_kolonu in df_stats.columns:
+        df_merged = pd.merge(df_stats, df_dates, left_on=oyuncu_kolonu, right_on='player', how='left')
+        # Birden fazla 'player' kolonu oluşmasını engellemek için temizlik
+        if 'player_y' in df_merged.columns:
+            df_merged = df_merged.drop(columns=['player_y']).rename(columns={'player_x': 'player'})
+    else:
+        df_merged = df_stats.copy()
+        df_merged['birth_date'] = None
+
+    # Dinamik Yaş Hesaplama Kolonu (Bugünün Tarihi - Doğum Tarihi)
+    df_merged['birth_date'] = pd.to_datetime(df_merged['birth_date'], errors='coerce')
+    bugun = pd.to_datetime(datetime.today().strftime('%Y-%m-%d'))
+    
+    # Tam yaşı yıl olarak hesapla
+    df_merged['age'] = (bugun - df_merged['birth_date']).astype('<m8[Y]')
+    
+    return df_merged
 
 df = veri_yukle()
 
 if df.empty:
-    st.error("Veri dosyası bulunamadı!")
+    st.error("Veri dosyası bulunamadı! Lütfen 'otomatik_understat_verileri.csv' dosyasının var olduğundan emin ol.")
 else:
-    df.columns = [col.strip().lower() for col in df.columns]
-
     st.sidebar.header("⚙️ Analiz Filtreleri")
     lig_sutunu = 'league' if 'league' in df.columns else df.columns[0]
     secilen_ligler = st.sidebar.multiselect("Lig Seç:", options=df[lig_sutunu].unique(), default=df[lig_sutunu].unique())
@@ -36,42 +64,28 @@ else:
     kp_kolonu = 'key_passes'
     xgchain_kolonu = 'xgchain' if 'xgchain' in df.columns else 'xg_chain'
     xgbuildup_kolonu = 'xgbuildup' if 'xgbuildup' in df.columns else 'xg_buildup'
+    oyuncu_kolonu = 'player' if 'player' in df.columns else 'player_name'
+    takim_kolonu = 'team' if 'team' in df.columns else 'team_title'
     
     olasi_sure_isimleri = ['time', 'min', 'mins', 'minutes', 'oynama_suresi']
     sure_kolonu = next((col for col in olasi_sure_isimleri if col in df.columns), None)
 
-    # Sidebar Filtreleri
+    # Süre Filtresi
     if sure_kolonu:
         df[sure_kolonu] = pd.to_numeric(df[sure_kolonu], errors='coerce').fillna(0)
         min_sure = st.sidebar.slider("Minimum Oynama Süresi (Dakika):", 0, 2500, 300, 100)
         df_filtre = df[(df[lig_sutunu].isin(secilen_ligler)) & (df[sure_kolonu] >= min_sure)].copy()
     else:
-        min_sure = 0
         df_filtre = df[df[lig_sutunu].isin(secilen_ligler)].copy()
 
-    # --- U23 WONDERKID FİLTRESİ ---
-    # Genç yetenekleri yakalamak için bilinen U23 yıldızların listesi (veya yaş tahmini)
-    u23_yildizlar = [
-        'Lamine Yamal', 'Arda Güler', 'Endrick', 'Kobbie Mainoo', 'Alejandro Garnacho', 
-        'Mathys Tel', 'Warren Zaïre-Emery', 'Pau Cubarsí', 'Savinho', 'Xavi Simons',
-        'Florian Wirtz', 'Estevão', 'Lenyoro', 'Leny Yoro', 'Gavi', 'Pedri', 'Evan Ferguson',
-        'Joao Neves', 'Desire Doue', 'Kenan Yıldız', 'Baturina', 'Pacho'
-    ]
-    
-    u23_modu = st.sidebar.checkbox("🌟 Sadece U23 Wonderkid'leri Göster", value=False)
-    
-    oyuncu_kolonu = 'player' if 'player' in df.columns else 'player_name'
+    # --- DİNAMİK YAŞ FİLTRESİ ---
+    st.sidebar.subheader("🌟 U23 / Wonderkid Filtresi")
+    u23_modu = st.sidebar.checkbox("Sadece 23 Yaş ve Altı Oyuncuları Göster")
     
     if u23_modu:
-        # Oyuncu adının içinde bu isimler geçiyorsa veya veri setinde yaş kolonu varsa filtrele
-        # Burada hem bilinen liste hem de yaş kolonu varsa onu kullanalım
-        if 'age' in df_filtre.columns:
-            df_filtre['age'] = pd.to_numeric(df_filtre['age'], errors='coerce')
-            df_filtre = df_filtre[df_filtre['age'] <= 23]
-        else:
-            # Akıllı isim eşleştirme veya manuel filtre simülasyonu
-            df_filtre = df_filtre[df_filtre[oyuncu_kolonu].isin(u23_yildizlar) | (df_filtre[gol_kolonu] >= 0)] # Şimdilik esnek tutalım
-            st.sidebar.info("U23 modu aktif: Popüler genç yetenekler ve potansiyel isimler filtreleniyor.")
+        # Sadece yaşı hesaplanabilen ve 23'e eşit/küçük olanları tut
+        df_filtre = df_filtre[df_filtre['age'] <= 23.0]
+        st.sidebar.success("U23 filtresi aktif. Statik referans dosyasından eşleşen gençler listeleniyor.")
 
     # Sayısal dönüşümler
     sayisal_kolonlar = [gol_kolonu, xg_kolonu, sut_kolonu, asist_kolonu, xa_kolonu, kp_kolonu, xgchain_kolonu, xgbuildup_kolonu]
@@ -83,19 +97,16 @@ else:
 
     df_filtre['bitiricilik_deltasi'] = (df_filtre[gol_kolonu] - df_filtre[xg_kolonu]).round(2)
     df_filtre['asist_deltasi'] = (df_filtre[asist_kolonu] - df_filtre[xa_kolonu]).round(2)
-    
-    takim_kolonu = 'team' if 'team' in df.columns else 'team_title'
 
     # --- 3 SEKME (TABS) YAPISI ---
     tab1, tab2, tab3 = st.tabs(["🎯 Keskin Nişancılar", "🧠 10 Numaralar & Kanatlar", "🛡️ Gizli Kahramanlar (Stoper & 6-8 Numara)"])
 
     with tab1:
-        st.subheader("Şut Hacmi vs Bitiricilik Deltası (U23 / Genç Odaklı)")
+        st.subheader("Şut Hacmi vs Bitiricilik Deltası")
         fig_gol = px.scatter(
             df_filtre.sort_values(by='bitiricilik_deltasi', ascending=False), 
             x=sut_kolonu, y='bitiricilik_deltasi', color=lig_sutunu, size=gol_kolonu,
-            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, gol_kolonu: True, xg_kolonu: True, **({sure_kolonu: True} if sure_kolonu else {})},
-            labels={sut_kolonu: 'Toplam Şut', 'bitiricilik_deltasi': 'Bitiricilik Deltası'},
+            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, gol_kolonu: True, xg_kolonu: True, 'age': True},
             size_max=20, template='plotly_white'
         )
         st.plotly_chart(fig_gol, use_container_width=True)
@@ -105,19 +116,17 @@ else:
         fig_asist = px.scatter(
             df_filtre.sort_values(by='asist_deltasi', ascending=False), 
             x=kp_kolonu, y='asist_deltasi', color=lig_sutunu, size=asist_kolonu,
-            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, asist_kolonu: True, xa_kolonu: True, **({sure_kolonu: True} if sure_kolonu else {})},
-            labels={kp_kolonu: 'Kilit Pas', 'asist_deltasi': 'Asist Deltası'},
+            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, asist_kolonu: True, xa_kolonu: True, 'age': True},
             size_max=20, template='plotly_white'
         )
         st.plotly_chart(fig_asist, use_container_width=True)
 
     with tab3:
-        st.subheader("Geriden Oyun Kurma ve Atak Başlatma")
+        st.subheader("Geriden Oyun Kurma (xGBuildup)")
         fig_build = px.scatter(
             df_filtre.sort_values(by=xgbuildup_kolonu, ascending=False),
             x=xgbuildup_kolonu, y=xgchain_kolonu, color=lig_sutunu,
-            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, **({sure_kolonu: True} if sure_kolonu else {})},
-            labels={xgbuildup_kolonu: 'xGBuildup', xgchain_kolonu: 'xGChain'},
+            hover_name=oyuncu_kolonu, hover_data={takim_kolonu: True, 'age': True},
             template='plotly_white'
         )
         st.plotly_chart(fig_build, use_container_width=True)
@@ -126,6 +135,7 @@ else:
     st.subheader(f"📋 Scout Raporu Tablosu ({len(df_filtre)} Oyuncu)")
     gosterilecek_sutunlar = [oyuncu_kolonu, takim_kolonu, lig_sutunu]
     if sure_kolonu: gosterilecek_sutunlar.append(sure_kolonu)
+    gosterilecek_sutunlar.append('age')
     gosterilecek_sutunlar.extend([xgbuildup_kolonu, xgchain_kolonu, gol_kolonu, xg_kolonu, kp_kolonu, xa_kolonu])
     
     gosterilecek_tablo = df_filtre[gosterilecek_sutunlar]
