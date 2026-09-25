@@ -13,21 +13,23 @@ def veri_yukle():
         df_stats = pd.read_csv('otomatik_understat_verileri.csv')
         df_stats.columns = [col.strip().lower() for col in df_stats.columns]
     except Exception:
-        return pd.DataFrame(), False
+        return pd.DataFrame(), False, "Ana veri okunamadı"
 
     oyuncu_kolonu = 'player' if 'player' in df_stats.columns else 'player_name'
 
-    # 2. Yaş Verisini Yükle
+    # 2. Yaş Verisini Yükle (Hataları gizlemeden)
     yas_dosyasi_bulundu = False
+    hata_mesaji = ""
     try:
-        df_dates = pd.read_csv('oyuncu_dogum_tarihleri.csv')
+        # Virgül/Noktalı virgül karışıklığını ve UTF-8 hatalarını otomatik çözer
+        df_dates = pd.read_csv('oyuncu_dogum_tarihleri.csv', sep=None, engine='python', encoding='utf-8-sig')
         df_dates.columns = ['player', 'birth_date']
         yas_dosyasi_bulundu = True
-    except Exception:
+    except Exception as e:
+        hata_mesaji = str(e)
         df_dates = pd.DataFrame(columns=['player', 'birth_date'])
 
-    # 3. Kusursuz Eşleştirme (Zırhlı Merge)
-    # İsimleri küçük harfe çevirip sağdaki-soldaki görünmez boşlukları temizliyoruz
+    # 3. Kusursuz Eşleştirme
     df_stats['merge_key'] = df_stats[oyuncu_kolonu].astype(str).str.lower().str.strip()
     df_dates['merge_key'] = df_dates['player'].astype(str).str.lower().str.strip()
 
@@ -37,25 +39,24 @@ def veri_yukle():
         df_merged = df_stats.copy()
         df_merged['birth_date'] = None
 
-    # İşimiz bitince geçici anahtarı siliyoruz
     df_merged = df_merged.drop(columns=['merge_key'])
 
-    # 4. Dinamik Yaş Hesaplama
+    # 4. Dinamik Yaş Hesaplama (dayfirst=True ile Gün/Ay/Yıl formatı düzeltildi)
     df_merged['birth_date'] = pd.to_datetime(df_merged['birth_date'], dayfirst=True, errors='coerce')
     bugun = pd.to_datetime(datetime.today().strftime('%Y-%m-%d'))
     df_merged['age'] = (bugun - df_merged['birth_date']).dt.days / 365.25
     
-    return df_merged, yas_dosyasi_bulundu
+    return df_merged, yas_dosyasi_bulundu, hata_mesaji
 
-df, yas_dosyasi_bulundu = veri_yukle()
+df, yas_dosyasi_bulundu, hata_mesaji = veri_yukle()
 
 if df.empty:
     st.error("Ana veri dosyası ('otomatik_understat_verileri.csv') bulunamadı!")
 else:
-    # Sol Menü Uyarıları
     st.sidebar.header("⚙️ Analiz Filtreleri")
     if not yas_dosyasi_bulundu:
-        st.sidebar.error("⚠️ 'oyuncu_dogum_tarihleri.csv' dosyası GitHub'da bulunamadı! İsmini tam olarak böyle kaydettiğinden emin ol.")
+        # Artık "dosya yok" demek yerine gerçek hatayı ekrana basacak
+        st.sidebar.error(f"⚠️ Dosya okunurken hata oluştu! Hata detayı: {hata_mesaji}")
     else:
         eslesen_kisi_sayisi = df['age'].notnull().sum()
         st.sidebar.success(f"✅ Yaş dosyası bağlandı! {eslesen_kisi_sayisi} oyuncunun yaşı hesaplandı.")
@@ -84,7 +85,6 @@ else:
     else:
         df_filtre = df[df[lig_sutunu].isin(secilen_ligler)].copy()
 
-    # --- DİNAMİK YAŞ FİLTRESİ ---
     st.sidebar.subheader("🌟 U23 / Wonderkid Filtresi")
     u23_modu = st.sidebar.checkbox("Sadece 23 Yaş ve Altı Oyuncuları Göster")
     
