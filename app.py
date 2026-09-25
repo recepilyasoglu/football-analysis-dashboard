@@ -21,8 +21,8 @@ def veri_yukle():
     yas_dosyasi_bulundu = False
     hata_mesaji = ""
     try:
-        # Virgül/Noktalı virgül karışıklığını ve UTF-8 hatalarını otomatik çözer
-        df_dates = pd.read_csv('oyuncu_dogum_tarihleri.csv', sep=None, engine='python', encoding='utf-8-sig')
+        
+        df_dates = pd.read_csv('oyuncu_dogum_tarihleri.csv', sep=None, engine='python', encoding='windows-1254')
         df_dates.columns = ['player', 'birth_date']
         yas_dosyasi_bulundu = True
     except Exception as e:
