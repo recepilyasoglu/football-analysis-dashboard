@@ -41,7 +41,7 @@ def veri_yukle():
     df_merged = df_merged.drop(columns=['merge_key'])
 
     # 4. Dinamik Yaş Hesaplama
-    df_merged['birth_date'] = pd.to_datetime(df_merged['birth_date'], errors='coerce')
+    df_merged['birth_date'] = pd.to_datetime(df_merged['birth_date'], dayfirst=True, errors='coerce')
     bugun = pd.to_datetime(datetime.today().strftime('%Y-%m-%d'))
     df_merged['age'] = (bugun - df_merged['birth_date']).dt.days / 365.25
     
