@@ -23,26 +23,25 @@ def veri_yukle():
         df_dates = pd.read_csv('oyuncu_dogum_tarihleri.csv')
         df_dates.columns = ['player', 'birth_date']
     except Exception:
-        # Eğer dosya henüz yoksa boş bir tablo oluştur
         df_dates = pd.DataFrame(columns=['player', 'birth_date'])
 
     # İki veriyi oyuncu ismine göre birleştiriyoruz (Left Join)
     oyuncu_kolonu = 'player' if 'player' in df_stats.columns else 'player_name'
     if not df_dates.empty and oyuncu_kolonu in df_stats.columns:
         df_merged = pd.merge(df_stats, df_dates, left_on=oyuncu_kolonu, right_on='player', how='left')
-        # Birden fazla 'player' kolonu oluşmasını engellemek için temizlik
         if 'player_y' in df_merged.columns:
             df_merged = df_merged.drop(columns=['player_y']).rename(columns={'player_x': 'player'})
     else:
         df_merged = df_stats.copy()
         df_merged['birth_date'] = None
 
-    # Dinamik Yaş Hesaplama Kolonu (Bugünün Tarihi - Doğum Tarihi)
+    # Güvenli Dinamik Yaş Hesaplama
+    # Tüm tarihleri datetime formatına çevir, bozuk olanları NaT (Not a Time) yap
     df_merged['birth_date'] = pd.to_datetime(df_merged['birth_date'], errors='coerce')
     bugun = pd.to_datetime(datetime.today().strftime('%Y-%m-%d'))
     
-    # Tam yaşı yıl olarak hesapla
-    df_merged['age'] = (bugun - df_merged['birth_date']).astype('<m8[Y]')
+    # Hata fırlatmaması için, dt.days ile gün farkını bulup 365.25'e bölüyoruz
+    df_merged['age'] = (bugun - df_merged['birth_date']).dt.days / 365.25
     
     return df_merged
 
@@ -83,8 +82,8 @@ else:
     u23_modu = st.sidebar.checkbox("Sadece 23 Yaş ve Altı Oyuncuları Göster")
     
     if u23_modu:
-        # Sadece yaşı hesaplanabilen ve 23'e eşit/küçük olanları tut
-        df_filtre = df_filtre[df_filtre['age'] <= 23.0]
+        # Sadece yaşı hesaplanabilen (null olmayan) ve 23'e eşit/küçük olanları tut
+        df_filtre = df_filtre[(df_filtre['age'].notnull()) & (df_filtre['age'] <= 23.0)]
         st.sidebar.success("U23 filtresi aktif. Statik referans dosyasından eşleşen gençler listeleniyor.")
 
     # Sayısal dönüşümler
@@ -99,7 +98,7 @@ else:
     df_filtre['asist_deltasi'] = (df_filtre[asist_kolonu] - df_filtre[xa_kolonu]).round(2)
 
     # --- 3 SEKME (TABS) YAPISI ---
-    tab1, tab2, tab3 = st.tabs(["🎯 Keskin Nişancılar", "🧠 10 Numaralar & Kanatlar", "🛡️ Gizli Kahramanlar (Stoper & 6-8 Numara)"])
+    tab1, tab2, tab3 = st.tabs(["🎯 Keskin Nişancılar", "🧠 10 Numaralar & Kanatlar", "🛡️ Gizli Kahramanlar (Stoper & 6 Numara)"])
 
     with tab1:
         st.subheader("Şut Hacmi vs Bitiricilik Deltası")
@@ -138,5 +137,9 @@ else:
     gosterilecek_sutunlar.append('age')
     gosterilecek_sutunlar.extend([xgbuildup_kolonu, xgchain_kolonu, gol_kolonu, xg_kolonu, kp_kolonu, xa_kolonu])
     
-    gosterilecek_tablo = df_filtre[gosterilecek_sutunlar]
+    gosterilecek_tablo = df_filtre[gosterilecek_sutunlar].copy()
+    
+    # Tabloda yaşı daha düzgün göstermek için yuvarlama (NaN olanlar kalabilir)
+    gosterilecek_tablo['age'] = gosterilecek_tablo['age'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "Bilinmiyor")
+    
     st.dataframe(gosterilecek_tablo.sort_values(by=xgbuildup_kolonu, ascending=False), use_container_width=True)
