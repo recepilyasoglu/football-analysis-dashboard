@@ -7,27 +7,32 @@ from datetime import datetime
 st.set_page_config(page_title="Scout Pano", layout="wide")
 st.title("⚽ Dinamik Oyuncu Scout Panosu")
 
-# 1. VERİ YÜKLEME VE BİRLEŞTİRME (Önbelleğe alınarak hızlandırıldı)
+# 1. VERİ YÜKLEME VE BİRLEŞTİRME
 @st.cache_data
 def verileri_hazirla():
     try:
-        # Kendi Understat istatistik dosyanın adını buraya yaz (örnek: understat_veri.csv)
+        # Ana istatistik verisini oku (Kendi dosya adını yazmayı unutma)
+        # Eğer bu dosyada da karakter sorunu oluyorsa buraya da encoding='windows-1254' ekleyebilirsin
         df_istatistik = pd.read_csv('otomatik_understat_verileri.csv') 
         
-        # Hataları giderdiğimiz UTF-8 formatlı yaş dosyasını okuyoruz
-        df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='utf-8-sig')
+        # Karakter sorununu çözdüğümüz format (Eğer windows-1254 ile kaydettiysen bunu, yoksa utf-8-sig kullan)
+        # Önceki denemelerimizde windows-1254'ün işe yaradığını görmüştük
+        try:
+            df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='utf-8-sig')
+        except UnicodeDecodeError:
+            df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='windows-1254')
         
         # İki veriyi 'player' kolonu üzerinden birleştir
         df_merge = pd.merge(df_istatistik, df_yas, on='player', how='inner')
         
-        # Doğum tarihinden otomatik yaş hesaplama
-        df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce')
+        # Doğum tarihinden otomatik yaş hesaplama (Tarih formatı sorunlarını önlemek için dayfirst=True)
+        df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce', dayfirst=True)
         bugun = pd.to_datetime("today")
         df_merge['Age'] = (bugun - df_merge['birth_date']).dt.days // 365
         
         return df_merge
     except Exception as e:
-        st.error(f"Veri yüklenirken hata oluştu: Lütfen CSV dosya isimlerinin doğruluğunu kontrol et. Detay: {e}")
+        st.error(f"Veri yüklenirken hata oluştu: {e}")
         return pd.DataFrame()
 
 # Ana veriyi çağır
@@ -71,7 +76,7 @@ if not df.empty:
             # Seçili oyuncunun verisini çek
             oyuncu_verisi = df_filtrelenmis[df_filtrelenmis['player'] == secilen_oyuncu].iloc[0]
             
-            # Radar metrikleri (Eksik kolon hatası almamak için get metodu kullanıldı)
+            # Radar metrikleri
             kategoriler = ['Gol Beklentisi (xG)', 'Asist Beklentisi (xA)', 'Şut', 'Kilit Pas', 'xGChain', 'xGBuildup']
             degerler = [
                 oyuncu_verisi.get('xG', 0), 
