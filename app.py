@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 from datetime import datetime
 
 st.set_page_config(page_title="Avrupa Scout Panosu", layout="wide")
@@ -137,3 +139,63 @@ else:
     gosterilecek_tablo['age'] = gosterilecek_tablo['age'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "Bilinmiyor")
     
     st.dataframe(gosterilecek_tablo.sort_values(by=xgbuildup_kolonu, ascending=False), use_container_width=True)
+
+
+st.markdown("---")
+st.subheader("🎯 Oyuncu Analiz Radarı")
+
+# Filtrelenmiş veri setindeki oyuncuları bir listeye alıp seçtiriyoruz
+# df_filtrelenmis, senin u23 veya diğer filtrelerden geçirdiğin DataFrame olmalı
+# Eğer ana veride aramak istersen df_filtrelenmis yerine ana df'ini yazabilirsin
+secilen_oyuncu = st.selectbox(
+    "Detaylı radar analizi için bir oyuncu seçin:", 
+    df_filtrelenmis['player'].unique()
+)
+
+if secilen_oyuncu:
+    # Seçilen oyuncunun verisini çekiyoruz
+    oyuncu_verisi = df_filtrelenmis[df_filtrelenmis['player'] == secilen_oyuncu].iloc[0]
+    
+    # Radarda görmek istediğimiz metrikler (İsimleri Türkçeleştirerek)
+    kategoriler = ['Gol Beklentisi (xG)', 'Asist Beklentisi (xA)', 'Şut', 'Kilit Pas', 'xGChain', 'xGBuildup']
+    
+    # Oyuncunun bu metriklerdeki değerleri
+    degerler = [
+        oyuncu_verisi['xG'], 
+        oyuncu_verisi['xA'], 
+        oyuncu_verisi['shots'], 
+        oyuncu_verisi['key_passes'], 
+        oyuncu_verisi['xGChain'], 
+        oyuncu_verisi['xGBuildup']
+    ]
+    
+    # Radar grafiğini oluşturma
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatterpolar(
+        r=degerler,
+        theta=kategoriler,
+        fill='toself',
+        fillcolor='rgba(0, 204, 150, 0.4)', # Şık bir yeşil saydam dolgu
+        line=dict(color='#00cc96', width=2),
+        name=secilen_oyuncu
+    ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                showline=False,
+            )
+        ),
+        showlegend=False,
+        title=dict(
+            text=f"<b>{secilen_oyuncu}</b> Profil Analizi",
+            x=0.5,
+            font=dict(size=20)
+        )
+    )
+    
+    # Grafiği panoya yansıt
+    st.plotly_chart(fig, use_container_width=True)
+
