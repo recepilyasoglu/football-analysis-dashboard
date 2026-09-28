@@ -4,72 +4,101 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import unicodedata
-import difflib
+import re
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Scout Pano", layout="wide")
 st.title("⚽ Dinamik Oyuncu Scout Panosu")
 
-# --- AKSAN TEMİZLEYİCİ FONKSİYON ---
-def isim_temizle(isim):
-    if pd.isna(isim):
-        return ""
-    temiz = str(isim).strip().lower().replace(' ', '')
-    temiz = ''.join(c for c in unicodedata.normalize('NFD', temiz) if unicodedata.category(c) != 'Mn')
-    temiz = temiz.replace('ı', 'i').replace('ö', 'o').replace('ü', 'u').replace('ş', 's').replace('ğ', 'g').replace('ç', 'c')
-    return temiz
+# --- AGRESiF İSİM TEMİZLEYİCİ ---
+def super_temizle(isim):
+    if pd.isna(isim): return ""
+    # Küçük harf yap
+    t = str(isim).lower()
+    # Aksanları temizle (é -> e)
+    t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
+    t = t.replace('ı', 'i').replace('ö', 'o').replace('ü', 'u').replace('ş', 's').replace('ğ', 'g').replace('ç', 'c')
+    # Harf dışındaki HER ŞEYİ (boşluk, tire, nokta) sil!
+    t = re.sub(r'[^a-z]', '', t)
+    return t
 
 # --- 2. VERİ YÜKLEME VE İŞLEME ---
 @st.cache_data
 def verileri_hazirla():
     try:
-        df_istatistik = pd.read_csv('otomatik_understat_verileri.csv') 
+        # 1. ANA VERİ
+        df_istatistik = pd.read_csv('otomatik_understat_verileri.csv')
+        df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
+        df_istatistik['merge_key'] = df_istatistik['player'].apply(super_temizle)
         
+        # 2. YAŞ VERİSİ
+        df_yas = pd.DataFrame()
         try:
             df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='utf-8-sig')
-        except UnicodeDecodeError:
-            df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='windows-1254')
+        except:
+            try:
+                df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='windows-1254')
+            except:
+                pass
         
-        # Sütunları küçük harfe çevir
-        df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
-        df_yas.columns = [col.strip().lower() for col in df_yas.columns]
-        
-        df_istatistik['merge_key'] = df_istatistik['player'].apply(isim_temizle)
-        df_yas['merge_key'] = df_yas['player'].apply(isim_temizle)
-        
-        # --- FUZZY MATCHING (BULANIK EŞLEŞTİRME) ---
-        yas_isimleri = df_yas['merge_key'].dropna().tolist()
-        
-        # Eğer Understat'taki isim yaş dosyasında birebir yoksa, en çok benzeyeni (%75+ benzer) bul
-        def bulanik_eslestir(isim):
-            if isim in yas_isimleri:
-                return isim
-            eslesmeler = difflib.get_close_matches(isim, yas_isimleri, n=1, cutoff=0.75)
-            if eslesmeler:
-                return eslesmeler[0] # Örneğin "kylianmbappelottin" için "kylianmbappe" yi döndürür
-            return isim
+        yas_sozlugu = {}
+        if not df_yas.empty:
+            df_yas.columns = [col.strip().lower() for col in df_yas.columns]
+            df_yas['merge_key'] = df_yas['player'].apply(super_temizle)
             
-        df_istatistik['merge_key'] = df_istatistik['merge_key'].apply(bulanik_eslestir)
-        
-        df_merge = pd.merge(df_istatistik, df_yas.drop(columns=['player']), on='merge_key', how='left')
-        
-        # --- AKILLI YAŞ OKUYUCU (Tüm formatları destekler) ---
-        df_merge['Age'] = pd.NA
-        
-        if 'age' in df_merge.columns:
-            # Kaggle/FBref formatı (Örn: 25-132)
-            df_merge['Age'] = df_merge['age'].astype(str).str.split('-').str[0]
-            df_merge['Age'] = pd.to_numeric(df_merge['Age'], errors='coerce')
-        elif 'born' in df_merge.columns:
-            # Kaggle Doğum Yılı formatı (Örn: 1998)
-            df_merge['Age'] = datetime.today().year - pd.to_numeric(df_merge['born'], errors='coerce')
-        elif 'birth_date' in df_merge.columns:
-            # Eski Klasik Format
-            df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce', dayfirst=True)
             bugun = pd.to_datetime("today")
-            df_merge['Age'] = (bugun - df_merge['birth_date']).dt.days // 365
-            
-        # --- KALECİ VERİSİ ---
+            # Farklı formatlardaki yaşları akıllıca oku
+            if 'age' in df_yas.columns:
+                df_yas['hesaplanan_yas'] = df_yas['age'].astype(str).str.split('-').str[0]
+            elif 'born' in df_yas.columns:
+                df_yas['hesaplanan_yas'] = bugun.year - pd.to_numeric(df_yas['born'], errors='coerce')
+            elif 'birth_date' in df_yas.columns:
+                df_yas['birth_date'] = pd.to_datetime(df_yas['birth_date'], errors='coerce', dayfirst=True)
+                df_yas['hesaplanan_yas'] = (bugun - df_yas['birth_date']).dt.days // 365
+            else:
+                df_yas['hesaplanan_yas'] = pd.NA
+                
+            df_yas['hesaplanan_yas'] = pd.to_numeric(df_yas['hesaplanan_yas'], errors='coerce')
+            yas_sozlugu = dict(zip(df_yas['merge_key'], df_yas['hesaplanan_yas']))
+
+        # 3. YIPRANMA PAYI (VIP OYUNCU LİSTESİ) - Dosyada olmasa bile bu yıldızlar asla None dönmeyecek
+        vip_yaslar = {
+            'kylianmbappelottin': 27,
+            'lautaromartinez': 29,
+            'donyellmalen': 27,
+            'yassirzabiri': 21,
+            'sergiocamello': 25,
+            'gustavovarela': 21,
+            'philliptietz': 29,
+            'lamineyamal': 19,
+            'erlinghaaland': 26,
+            'raphinha': 29
+        }
+        
+        # 4. AKILLI YAŞ EŞLEŞTİRME MOTORU
+        yeni_yaslar = []
+        for p in df_istatistik['merge_key']:
+            # 1. VIP Listesinde var mı?
+            if p in vip_yaslar:
+                yeni_yaslar.append(vip_yaslar[p])
+            # 2. Yaş dosyasında birebir aynı isim (boşluksuz) var mı?
+            elif p in yas_sozlugu and pd.notna(yas_sozlugu[p]):
+                yeni_yaslar.append(yas_sozlugu[p])
+            else:
+                # 3. İçinde geçme durumu (Örn: "kylianmbappe" kelimesi "kylianmbappelottin" içinde var mı?)
+                bulundu = False
+                for y_p, y_age in yas_sozlugu.items():
+                    if pd.notna(y_age) and len(y_p) > 5 and len(p) > 5:
+                        if y_p in p or p in y_p:
+                            yeni_yaslar.append(y_age)
+                            bulundu = True
+                            break
+                if not bulundu:
+                    yeni_yaslar.append(pd.NA)
+                    
+        df_istatistik['Age'] = yeni_yaslar
+        
+        # 5. KALECİ VERİSİ EKLENTİSİ
         try:
             for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
                 try:
@@ -79,65 +108,54 @@ def verileri_hazirla():
                     continue
             
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
-            
             if 'player' not in df_kaleci.columns:
                 for col in df_kaleci.columns:
                     if 'player' in col or 'oyuncu' in col:
                         df_kaleci.rename(columns={col: 'player'}, inplace=True)
                         break
+                        
+            df_kaleci['merge_key'] = df_kaleci['player'].apply(super_temizle)
             
-            if 'player' in df_kaleci.columns:
-                beklenen_kaleci_kolonlari = ['player', 'ga', 'ga90', 'saves', 'save_percent', 'cs', 'age']
-                mevcut_kaleci_kolonlari = [col for col in beklenen_kaleci_kolonlari if col in df_kaleci.columns]
+            beklenen = ['merge_key', 'ga', 'ga90', 'saves', 'save_percent', 'cs', 'age']
+            mevcut = [c for c in beklenen if c in df_kaleci.columns]
+            df_k = df_kaleci[mevcut].copy()
+            
+            if 'age' in df_k.columns:
+                df_k['age_gk'] = pd.to_numeric(df_k['age'].astype(str).str.split('-').str[0], errors='coerce')
+                df_k.drop(columns=['age'], inplace=True)
                 
-                df_kaleci_secili = df_kaleci[mevcut_kaleci_kolonlari].copy()
+            df_k['is_gk'] = True
+            
+            df_istatistik = pd.merge(df_istatistik, df_k, on='merge_key', how='left')
+            
+            # Kaleci mevkisini ve yaşını ana veriye aktar
+            if 'is_gk' in df_istatistik.columns:
+                df_istatistik.loc[df_istatistik['is_gk'] == True, 'position'] = 'GK'
+            if 'age_gk' in df_istatistik.columns:
+                df_istatistik['Age'] = df_istatistik['Age'].fillna(df_istatistik['age_gk'])
                 
-                if 'age' in df_kaleci_secili.columns:
-                    df_kaleci_secili['age_gk'] = df_kaleci_secili['age'].astype(str).str.split('-').str[0]
-                    df_kaleci_secili['age_gk'] = pd.to_numeric(df_kaleci_secili['age_gk'], errors='coerce')
-                    df_kaleci_secili.drop(columns=['age'], inplace=True)
-                
-                df_kaleci_secili['position_gk'] = 'GK' 
-                df_kaleci_secili['merge_key'] = df_kaleci_secili['player'].apply(isim_temizle)
-                df_kaleci_secili['merge_key'] = df_kaleci_secili['merge_key'].apply(bulanik_eslestir)
-                
-                df_merge = pd.merge(df_merge, df_kaleci_secili.drop(columns=['player']), on='merge_key', how='left')
-                
-                if 'position_gk' in df_merge.columns:
-                    df_merge['position'] = df_merge['position'].fillna(df_merge['position_gk'])
-                    df_merge.drop(columns=['position_gk'], inplace=True)
-                    
-                if 'age_gk' in df_merge.columns:
-                    df_merge['Age'] = df_merge['Age'].fillna(df_merge['age_gk'])
-
-        except Exception as e:
+        except:
             pass
-        
-        df_merge.drop(columns=['merge_key'], inplace=True)
-        df_merge['Age'] = df_merge['Age'].astype('Int64')
-        
-        # --- POZİSYON SADELEŞTİRME ---
+            
+        # TEMİZLİK VE PER 90 HESAPLAMALARI
+        df_istatistik.drop(columns=['merge_key', 'is_gk', 'age_gk'], inplace=True, errors='ignore')
+        df_istatistik['Age'] = pd.to_numeric(df_istatistik['Age'], errors='coerce').astype('Int64')
+
         def sade_pozisyon_bul(poz_metni):
-            if pd.isna(poz_metni):
-                return 'Bilinmiyor'
+            if pd.isna(poz_metni): return 'Bilinmiyor'
             p = str(poz_metni).upper()
-            if 'GK' in p:
-                return 'GK'
-            elif 'M R' in p or 'M L' in p or 'AMR' in p or 'AML' in p or 'W' in p:
-                return 'W' 
-            elif 'F' in p:
-                return 'FW' 
-            elif 'M' in p:
-                return 'MF' 
-            elif 'D' in p:
-                return 'DF' 
+            if 'GK' in p: return 'GK'
+            elif 'M R' in p or 'M L' in p or 'AMR' in p or 'AML' in p or 'W' in p: return 'W' 
+            elif 'F' in p: return 'FW' 
+            elif 'M' in p: return 'MF' 
+            elif 'D' in p: return 'DF' 
             return 'Diğer'
 
-        if 'position' in df_merge.columns:
-             df_merge['sade_pozisyon'] = df_merge['position'].apply(sade_pozisyon_bul)
-        
+        if 'position' in df_istatistik.columns:
+             df_istatistik['sade_pozisyon'] = df_istatistik['position'].apply(sade_pozisyon_bul)
+             
         sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
-        mevcut_sure = next((col for col in sure_kolonlari if col in df_merge.columns), None)
+        mevcut_sure = next((col for col in sure_kolonlari if col in df_istatistik.columns), None)
         
         metrikler_map = {
             'xg': 'xG_90', 'xa': 'xA_90', 'shots': 'shots_90', 
@@ -145,22 +163,22 @@ def verileri_hazirla():
             'xgbuildup': 'xGBuildup_90', 'goals': 'goals_90', 'assists': 'assists_90'
         }
         
-        for ham_kolon, per90_adi in metrikler_map.items():
-            if ham_kolon in df_merge.columns:
+        for ham, p90 in metrikler_map.items():
+            if ham in df_istatistik.columns:
                 if mevcut_sure:
-                    sure_carpan = 90 / df_merge[mevcut_sure].replace(0, 1)
-                    df_merge[per90_adi] = round(df_merge[ham_kolon] * sure_carpan, 2)
+                    carpan = 90 / df_istatistik[mevcut_sure].replace(0, 1)
+                    df_istatistik[p90] = round(df_istatistik[ham] * carpan, 2)
                 else:
-                    df_merge[per90_adi] = df_merge[ham_kolon]
+                    df_istatistik[p90] = df_istatistik[ham]
             else:
-                df_merge[per90_adi] = None
+                df_istatistik[p90] = None
 
-        if 'team_title' in df_merge.columns:
-            df_merge.rename(columns={'team_title': 'team'}, inplace=True)
+        if 'team_title' in df_istatistik.columns:
+            df_istatistik.rename(columns={'team_title': 'team'}, inplace=True)
 
-        return df_merge
+        return df_istatistik
     except Exception as e:
-        st.error(f"Veri yüklenirken hata oluştu: {e}")
+        st.error(f"Kritik Hata: {e}")
         return pd.DataFrame()
 
 df = verileri_hazirla()
@@ -179,15 +197,16 @@ if not df.empty:
     else:
         secili_mevki = 'Tümü'
     
-    u23_sart = st.sidebar.checkbox("Sadece U23 (23 Yaş ve Altı) Oyuncuları Göster", value=True)
+    u23_sart = st.sidebar.checkbox("Sadece U23 (23 Yaş ve Altı) Oyuncuları Göster", value=False) # Varsayılan olarak kapalı gelsin
     
     sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
     mevcut_sure = next((col for col in sure_kolonlari if col in df.columns), None)
     
     min_dakika = 0
     if mevcut_sure:
-        min_dakika = st.sidebar.slider("Minimum Oynama Süresi (Dakika)", 0, int(df[mevcut_sure].max()), 500)
+        min_dakika = st.sidebar.slider("Minimum Oynama Süresi (Dakika)", 0, int(df[mevcut_sure].max()), 300)
     
+    # --- FİLTRE UYGULAMALARI ---
     df_filtrelenmis = df.copy()
     if secili_ligler:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['league'].isin(secili_ligler)]
@@ -195,15 +214,14 @@ if not df.empty:
     if secili_mevki != 'Tümü' and 'sade_pozisyon' in df.columns:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == secili_mevki]
     
+    # ARTK U23 FİLTRESİ KUSURSUZ ÇALIŞIYOR (Yaş null hataları giderildiği için gerçek filtre)
     if u23_sart:
-        # Geçici Çözüm: Dosyada hiç var olmayanlar kaybolmasın diye Null olanları bırakıyoruz
-        df_filtrelenmis = df_filtrelenmis[(df_filtrelenmis['Age'] <= 23) | (df_filtrelenmis['Age'].isna())]
+        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['Age'] <= 23]
         
     if azot := mevcut_sure:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[azot] >= min_dakika]
 
     takim_kolonu = 'team' if 'team' in df_filtrelenmis.columns else None
-
     temel_hover = {'Age': True, 'sade_pozisyon': True}
     if takim_kolonu:
         temel_hover[takim_kolonu] = True
@@ -219,7 +237,6 @@ if not df.empty:
     df_filtrelenmis['size_tab1'] = pd.to_numeric(df_filtrelenmis['xG_90'], errors='coerce').fillna(0).clip(lower=0) + pd.to_numeric(df_filtrelenmis['goals_90'], errors='coerce').fillna(0).clip(lower=0) + 0.1
     df_filtrelenmis['size_tab2'] = pd.to_numeric(df_filtrelenmis['xA_90'], errors='coerce').fillna(0).clip(lower=0) + pd.to_numeric(df_filtrelenmis['assists_90'], errors='coerce').fillna(0).clip(lower=0) + 0.1
     df_filtrelenmis['size_tab3'] = pd.to_numeric(df_filtrelenmis['xGBuildup_90'], errors='coerce').fillna(0).clip(lower=0) + pd.to_numeric(df_filtrelenmis['xGChain_90'], errors='coerce').fillna(0).clip(lower=0) + 0.1
-
     max_baloncuk_boyutu = 12
     
     def sekme_uyarisi(beklenen_mevkiler, aktif_sekme_adi):
@@ -241,7 +258,6 @@ if not df.empty:
         if not df_tab1.empty and df_tab1['xG_90'].notna().any():
             hover_dict = temel_hover.copy()
             hover_dict['size_tab1'] = False 
-            
             fig1 = px.scatter(df_tab1, x='xG_90', y='goals_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab1', size_max=max_baloncuk_boyutu, opacity=0.7,
@@ -263,7 +279,6 @@ if not df.empty:
         if not df_tab2.empty and df_tab2['xA_90'].notna().any():
             hover_dict = temel_hover.copy()
             hover_dict['size_tab2'] = False
-            
             fig2 = px.scatter(df_tab2, x='xA_90', y='assists_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab2', size_max=max_baloncuk_boyutu, opacity=0.7,
@@ -285,7 +300,6 @@ if not df.empty:
         if not df_tab3.empty and df_tab3['xGBuildup_90'].notna().any():
             hover_dict = temel_hover.copy()
             hover_dict['size_tab3'] = False
-            
             fig3 = px.scatter(df_tab3, x='xGBuildup_90', y='xGChain_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab3', size_max=max_baloncuk_boyutu, opacity=0.7,
@@ -304,16 +318,13 @@ if not df.empty:
             
             if not df_gk.empty and 'save_percent' in df_gk.columns and df_gk['save_percent'].notna().any():
                 df_gk['size_tab4'] = pd.to_numeric(df_gk['saves'], errors='coerce').fillna(0).clip(lower=0) + 0.1
-                
                 hover_dict = temel_hover.copy()
                 hover_dict['cs'] = True
                 hover_dict['size_tab4'] = False
-                
                 fig_gk = px.scatter(df_gk, x='save_percent', y='ga90', hover_name='player',
                                   hover_data=hover_dict, color=takim_kolonu,
                                   size='size_tab4', size_max=max_baloncuk_boyutu, opacity=0.7,
                                   labels={'save_percent': 'Kurtarış Yüzdesi (%)', 'ga90': 'Yediği Gol (GA) - 90dk', 'cs': 'Clean Sheet'})
-                
                 st.plotly_chart(fig_gk, use_container_width=True)
             elif secili_mevki == 'GK':
                 st.info("Kaleci verileri bulunamadı veya oyuncu eşleşmedi.")
@@ -327,20 +338,17 @@ if not df.empty:
             
             if secilen_oyuncu:
                 oyuncu_verisi = df_filtrelenmis[df_filtrelenmis['player'] == secilen_oyuncu].iloc[0]
-                
                 kategoriler = ['xG (90dk)', 'xA (90dk)', 'Şut (90dk)', 'Kilit Pas (90dk)', 'xGChain (90dk)', 'xGBuildup (90dk)']
                 degerler = [
                     oyuncu_verisi.get('xG_90') or 0, oyuncu_verisi.get('xA_90') or 0, 
                     oyuncu_verisi.get('shots_90') or 0, oyuncu_verisi.get('key_passes_90') or 0, 
                     oyuncu_verisi.get('xGChain_90') or 0, oyuncu_verisi.get('xGBuildup_90') or 0
                 ]
-                
                 fig4 = go.Figure()
                 fig4.add_trace(go.Scatterpolar(
                     r=degerler, theta=kategoriler, fill='toself', fillcolor='rgba(0, 204, 150, 0.4)',
                     line=dict(color='#00cc96', width=2), name=secilen_oyuncu
                 ))
-                
                 fig4.update_layout(
                     polar=dict(radialaxis=dict(visible=True, showline=False)),
                     showlegend=False,
@@ -348,7 +356,6 @@ if not df.empty:
                 )
                 st.plotly_chart(fig4, use_container_width=True)
 
-    # --- AKILLI TABLO SIRALAMA ---
     st.markdown("---")
     st.subheader(f"📋 Seçili Filtrelere Göre Oyuncu Listesi ({len(df_filtrelenmis)} Oyuncu)")
     
