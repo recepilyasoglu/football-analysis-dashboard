@@ -24,7 +24,7 @@ def verileri_hazirla():
         
         df_merge = pd.merge(df_istatistik, df_yas, on='player', how='left')
         
-        # --- KALECİ VERİSİ ---
+        # --- KALECİ VERİSİ (Yaş Çekme Sistemi Eklendi) ---
         try:
             for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
                 try:
@@ -34,6 +34,7 @@ def verileri_hazirla():
                     continue
             
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
+            
             if 'player' not in df_kaleci.columns:
                 for col in df_kaleci.columns:
                     if 'player' in col or 'oyuncu' in col:
@@ -41,17 +42,22 @@ def verileri_hazirla():
                         break
             
             if 'player' in df_kaleci.columns:
-                beklenen_kaleci_kolonlari = ['player', 'ga', 'ga90', 'saves', 'save_percent', 'cs']
+                # FBref'teki age (yaş) kolonunu da içeri alıyoruz
+                beklenen_kaleci_kolonlari = ['player', 'ga', 'ga90', 'saves', 'save_percent', 'cs', 'age']
                 mevcut_kaleci_kolonlari = [col for col in beklenen_kaleci_kolonlari if col in df_kaleci.columns]
-                df_kaleci_secili = df_kaleci[mevcut_kaleci_kolonlari]
                 
-                # Kalecilerin pozisyonunu zorla 'GK' yap (FBref'ten geldikleri kesinleşsin diye)
+                df_kaleci_secili = df_kaleci[mevcut_kaleci_kolonlari].copy()
+                
+                # FBref'te yaşlar "25-132" gibi yazılır. '-' işaretinden bölüp ilk kısmını alıyoruz.
+                if 'age' in df_kaleci_secili.columns:
+                    df_kaleci_secili['age_gk'] = df_kaleci_secili['age'].astype(str).str.split('-').str[0]
+                    df_kaleci_secili['age_gk'] = pd.to_numeric(df_kaleci_secili['age_gk'], errors='coerce')
+                    df_kaleci_secili.drop(columns=['age'], inplace=True)
+                
                 df_kaleci_secili['position'] = 'GK' 
                 
-                # Sadece mevcut oyuncuları güncelle (how='left' ile ana veriyi bozmadan)
                 df_merge = pd.merge(df_merge, df_kaleci_secili, on='player', how='left', suffixes=('', '_gk'))
                 
-                # Ana veride position boş olan kalecilere GK yaz
                 if 'position_gk' in df_merge.columns:
                     df_merge['position'] = df_merge['position'].fillna(df_merge['position_gk'])
                     df_merge.drop(columns=['position_gk'], inplace=True)
@@ -66,9 +72,6 @@ def verileri_hazirla():
             p = str(poz_metni).upper()
             if 'GK' in p:
                 return 'GK'
-            # Kanat oyuncuları (W) genellikle Understat'ta AML, AMR, M L, M R gibi geçer. 
-            # Biz basitçe 'W' harfi arayalım veya genel kabul görmüş kanat isimlerini yakalayalım.
-            # (Understat verisine göre bu kısmı biraz daha ayarlamak gerekebilir, şimdilik F ve M'ye bağlıyorum)
             elif 'M R' in p or 'M L' in p or 'AMR' in p or 'AML' in p or 'W' in p:
                 return 'W' # Kanat
             elif 'F' in p:
@@ -82,9 +85,14 @@ def verileri_hazirla():
         if 'position' in df_merge.columns:
              df_merge['sade_pozisyon'] = df_merge['position'].apply(sade_pozisyon_bul)
         
+        # Normal Yaş Hesaplama
         df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce', dayfirst=True)
         bugun = pd.to_datetime("today")
         df_merge['Age'] = (bugun - df_merge['birth_date']).dt.days // 365
+        
+        # EKSİK YAŞLARI KALECİLERDEN DOLDUR (Transfermarkt'ta olmayan kalecilerin yaşı FBref'ten dolar)
+        if 'age_gk' in df_merge.columns:
+            df_merge['Age'] = df_merge['Age'].fillna(df_merge['age_gk'])
         
         sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
         mevcut_sure = next((col for col in sure_kolonlari if col in df_merge.columns), None)
@@ -123,10 +131,8 @@ if not df.empty:
     else:
         secili_ligler = []
         
-    # --- YENİ MEVKİ FİLTRESİ VE OTOMATİK SEKME YÖNLENDİRMESİ ---
     if 'sade_pozisyon' in df.columns:
         mevcut_sade_mevkiler = df['sade_pozisyon'].dropna().unique()
-        # Kullanıcı sadece BİR mevki seçsin ki sekmeyi doğru yönlendirebilelim.
         secili_mevki = st.sidebar.selectbox("Mevki Seçin", ['Tümü'] + list(mevcut_sade_mevkiler))
     else:
         secili_mevki = 'Tümü'
@@ -147,8 +153,9 @@ if not df.empty:
     if secili_mevki != 'Tümü' and 'sade_pozisyon' in df.columns:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == secili_mevki]
     
+    # ARTIK KALECİLERİN YAŞI OLDUĞU İÇİN GERÇEK MATEMATİKSEL U23 FİLTRESİ
     if u23_sart:
-        df_filtrelenmis = df_filtrelenmis[(df_filtrelenmis['Age'] <= 23) | (df_filtrelenmis['Age'].isna())]
+        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['Age'] <= 23]
         
     if azot := mevcut_sure:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[azot] >= min_dakika]
@@ -157,18 +164,6 @@ if not df.empty:
     hover_liste = [takim_kolonu, 'Age', 'sade_pozisyon'] if takim_kolonu else ['Age', 'sade_pozisyon']
 
     # --- AKILLI SEKME (TABS) YÖNETİMİ ---
-    # Seçilen mevkiye göre varsayılan sekmeyi belirliyoruz
-    if secili_mevki == 'GK':
-        default_tab = 3 # Eldivenler sekmesi
-    elif secili_mevki == 'W':
-        default_tab = 1 # 10 Numaralar & Kanatlar sekmesi
-    elif secili_mevki == 'MF' or secili_mevki == 'DF':
-        default_tab = 2 # Gizli Kahramanlar sekmesi
-    elif secili_mevki == 'FW':
-         default_tab = 0 # Keskin Nişancılar sekmesi
-    else:
-        default_tab = 0
-
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Keskin Nişancılar (Gol & xG)", 
         "10 Numaralar & Kanatlar", 
@@ -183,7 +178,6 @@ if not df.empty:
 
     max_baloncuk_boyutu = 12
     
-    # Uyarı mesajı fonksiyonu
     def sekme_uyarisi(beklenen_mevkiler, aktif_sekme_adi):
         if secili_mevki != 'Tümü' and secili_mevki not in beklenen_mevkiler:
              st.warning(f"Şu an **{aktif_sekme_adi}** sekmesindesiniz. Ancak soldan **{secili_mevki}** mevkisini seçtiniz. Lütfen ilgili oyuncuları görmek için uygun sekmeye geçin veya mevki filtresini değiştirin.")
@@ -193,7 +187,6 @@ if not df.empty:
         sekme_uyarisi(['FW', 'W'], "Keskin Nişancılar")
         
         if 'sade_pozisyon' in df_filtrelenmis.columns:
-             # FW ve W'leri göster (Eğer Tümü seçiliyse zaten hepsi filtrelenmiş gelir)
              if secili_mevki == 'Tümü':
                  df_tab1 = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'].isin(['FW', 'W'])]
              else:
@@ -256,7 +249,7 @@ if not df.empty:
             if secili_mevki == 'Tümü':
                 df_gk = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == 'GK']
             else:
-                 df_gk = df_filtrelenmis # Zaten sadece GK seçiliyse hepsi GK'dir
+                 df_gk = df_filtrelenmis 
             
             if not df_gk.empty and 'save_percent' in df_gk.columns and df_gk['save_percent'].notna().any():
                 df_gk['size_tab4'] = pd.to_numeric(df_gk['saves'], errors='coerce').fillna(0).clip(lower=0) + 0.1
@@ -268,7 +261,7 @@ if not df.empty:
                 
                 st.plotly_chart(fig_gk, use_container_width=True)
             elif secili_mevki == 'GK':
-                st.info("Kaleci verileri ('kaleci_verileri.csv') okundu ancak 'save_percent' tablonuzda bulunamadı veya oyuncu eşleşmedi.")
+                st.info("Kaleci verileri bulunamadı veya oyuncu eşleşmedi.")
         else:
             st.warning("Verinizde pozisyon kolonu bulunamadı.")
 
