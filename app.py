@@ -13,11 +13,8 @@ st.title("⚽ Dinamik Oyuncu Scout Panosu")
 def isim_temizle(isim):
     if pd.isna(isim):
         return ""
-    # 1. String'e çevir, boşlukları sil, küçük harf yap
     temiz = str(isim).strip().lower().replace(' ', '')
-    # 2. Aksanlı karakterleri (é, í, ä vb.) düz İngilizce harflere çevir
     temiz = ''.join(c for c in unicodedata.normalize('NFD', temiz) if unicodedata.category(c) != 'Mn')
-    # 3. Bazı özel harfleri (örn: İspanyolca ñ veya Türkçe ı, İ) manuel düzelt
     temiz = temiz.replace('ı', 'i').replace('ö', 'o').replace('ü', 'u').replace('ş', 's').replace('ğ', 'g').replace('ç', 'c')
     return temiz
 
@@ -35,7 +32,6 @@ def verileri_hazirla():
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_yas.columns = [col.strip().lower() for col in df_yas.columns]
         
-        # --- KUSURSUZ EŞLEŞTİRME (Aksan ve Boşluk Temizliği) ---
         df_istatistik['merge_key'] = df_istatistik['player'].apply(isim_temizle)
         df_yas['merge_key'] = df_yas['player'].apply(isim_temizle)
         
@@ -173,7 +169,8 @@ if not df.empty:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == secili_mevki]
     
     if u23_sart:
-        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['Age'] <= 23]
+        # Geçici Çözüm: Yaşı None olanları kaybetmemek için filtreye dahil ediyoruz
+        df_filtrelenmis = df_filtrelenmis[(df_filtrelenmis['Age'] <= 23) | (df_filtrelenmis['Age'].isna())]
         
     if azot := mevcut_sure:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[azot] >= min_dakika]
@@ -324,6 +321,7 @@ if not df.empty:
                 )
                 st.plotly_chart(fig4, use_container_width=True)
 
+    # --- AKILLI TABLO SIRALAMA ---
     st.markdown("---")
     st.subheader(f"📋 Seçili Filtrelere Göre Oyuncu Listesi ({len(df_filtrelenmis)} Oyuncu)")
     
