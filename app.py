@@ -29,10 +29,16 @@ def verileri_hazirla():
         
         # --- YENİ: DIŞARIDAN KALECİ VERİSİ (FBref) ENTEGRASYONU ---
         try:
-            df_kaleci = pd.read_csv('kaleci_verileri.csv')
+            # Karakter kodlaması hatalarını (0xed invalid continuation byte) önlemek için çoklu deneme
+            try:
+                df_kaleci = pd.read_csv('kaleci_verileri.csv', encoding='utf-8-sig')
+            except UnicodeDecodeError:
+                try:
+                    df_kaleci = pd.read_csv('kaleci_verileri.csv', encoding='windows-1254')
+                except UnicodeDecodeError:
+                    df_kaleci = pd.read_csv('kaleci_verileri.csv', encoding='latin1')
             
             # FBref'in çoklu başlık (multi-index) yapısını veya özel karakterlerini temizleme
-            # % işaretini kodun sorunsuz okuyabilmesi için _percent yapıyoruz
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
             
             # Kaleci dosyasından sadece işimize yarayacak değerli kolonları alıyoruz
@@ -173,13 +179,9 @@ if not df.empty:
     with tab4:
         st.subheader("Kurtarış Yüzdesi vs Yediği Gol (90dk) - Kaleci Analizi")
         if 'position' in df_filtrelenmis.columns:
-            # Hem 'GK' yazanları bul
             df_gk = df_filtrelenmis[df_filtrelenmis['position'].str.contains('GK', na=False)]
             
-            # Gerekli kaleci verileri yüklenmiş mi kontrol et
             if not df_gk.empty and 'save_percent' in df_gk.columns and df_gk['save_percent'].notna().any():
-                
-                # Baloncuk boyutunu toplam kurtarış (saves) sayısına bağlıyoruz
                 df_gk['size_tab4'] = pd.to_numeric(df_gk['saves'], errors='coerce').fillna(0).clip(lower=0) + 0.1
                 
                 fig_gk = px.scatter(df_gk, x='save_percent', y='ga90', hover_name='player',
@@ -187,13 +189,10 @@ if not df.empty:
                                   size='size_tab4', size_max=max_baloncuk_boyutu, opacity=0.7,
                                   labels={'save_percent': 'Kurtarış Yüzdesi (%)', 'ga90': 'Yediği Gol (GA) - 90dk', 'cs': 'Clean Sheet'})
                 
-                # Grafik tasarımını güncelle: X ekseninde sağa doğru gitmek (yüksek kurtarış yüzdesi) iyi
-                # Y ekseninde aşağıda olmak (düşük yediği gol) iyidir.
-                fig_gk.update_layout(xaxis=dict(autorange="reversed")) # Kurtarış yüzdesi yüksek olanları vurgulamak istersen bu değiştirilebilir
-                
+                fig_gk.update_layout(xaxis=dict(autorange="reversed"))
                 st.plotly_chart(fig_gk, use_container_width=True)
             else:
-                st.info("Bu grafiği görmek için 'kaleci_verileri.csv' dosyasının dizinde olduğundan ve isimlerin (Player) Understat verisiyle eşleştiğinden emin olun.")
+                st.info("Bu grafiği görmek için 'kaleci_verileri.csv' dosyasının dizinde olduğundan emin olun.")
         else:
             st.warning("Verinizde 'position' kolonu bulunmadığı için kaleciler filtrelenemedi.")
 
@@ -228,7 +227,6 @@ if not df.empty:
     st.markdown("---")
     st.subheader(f"📋 Seçili Filtrelere Göre Oyuncu Listesi ({len(df_filtrelenmis)} Oyuncu)")
     
-    # Tüm ihtimalleri gözeterek kolonları sıralıyoruz
     gosterilecek_kolonlar = ['player', takim_kolonu, 'league', 'Age', 'position', mevcut_sure, 'xG_90', 'xA_90', 'goals_90', 'assists_90', 'save_percent', 'ga90', 'cs']
     mevcut_kolonlar = [col for col in gosterilecek_kolonlar if col and col in df_filtrelenmis.columns]
     
