@@ -24,7 +24,7 @@ def verileri_hazirla():
         
         df_merge = pd.merge(df_istatistik, df_yas, on='player', how='left')
         
-        # --- KALECİ VERİSİ ENTEGRASYONU (HATA RİSKİNE KARŞI GÜÇLENDİRİLDİ) ---
+        # --- KALECİ VERİSİ ---
         try:
             for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
                 try:
@@ -33,10 +33,7 @@ def verileri_hazirla():
                 except UnicodeDecodeError:
                     continue
             
-            # Sütun isimlerini küçük harfe çevir ve boşlukları temizle
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
-            
-            # Eğer 'player' sütunu yoksa ama 'Unnamed: 1' veya benzeri bir şey varsa player yap
             if 'player' not in df_kaleci.columns:
                 for col in df_kaleci.columns:
                     if 'player' in col or 'oyuncu' in col:
@@ -46,11 +43,44 @@ def verileri_hazirla():
             if 'player' in df_kaleci.columns:
                 beklenen_kaleci_kolonlari = ['player', 'ga', 'ga90', 'saves', 'save_percent', 'cs']
                 mevcut_kaleci_kolonlari = [col for col in beklenen_kaleci_kolonlari if col in df_kaleci.columns]
-                
                 df_kaleci_secili = df_kaleci[mevcut_kaleci_kolonlari]
-                df_merge = pd.merge(df_merge, df_kaleci_secili, on='player', how='left')
+                
+                # Kalecilerin pozisyonunu zorla 'GK' yap (FBref'ten geldikleri kesinleşsin diye)
+                df_kaleci_secili['position'] = 'GK' 
+                
+                # Sadece mevcut oyuncuları güncelle (how='left' ile ana veriyi bozmadan)
+                df_merge = pd.merge(df_merge, df_kaleci_secili, on='player', how='left', suffixes=('', '_gk'))
+                
+                # Ana veride position boş olan kalecilere GK yaz
+                if 'position_gk' in df_merge.columns:
+                    df_merge['position'] = df_merge['position'].fillna(df_merge['position_gk'])
+                    df_merge.drop(columns=['position_gk'], inplace=True)
+
         except Exception as e:
             pass
+        
+        # --- POZİSYON SADELEŞTİRME ---
+        def sade_pozisyon_bul(poz_metni):
+            if pd.isna(poz_metni):
+                return 'Bilinmiyor'
+            p = str(poz_metni).upper()
+            if 'GK' in p:
+                return 'GK'
+            # Kanat oyuncuları (W) genellikle Understat'ta AML, AMR, M L, M R gibi geçer. 
+            # Biz basitçe 'W' harfi arayalım veya genel kabul görmüş kanat isimlerini yakalayalım.
+            # (Understat verisine göre bu kısmı biraz daha ayarlamak gerekebilir, şimdilik F ve M'ye bağlıyorum)
+            elif 'M R' in p or 'M L' in p or 'AMR' in p or 'AML' in p or 'W' in p:
+                return 'W' # Kanat
+            elif 'F' in p:
+                return 'FW' # Forvet
+            elif 'M' in p:
+                return 'MF' # Orta Saha
+            elif 'D' in p:
+                return 'DF' # Defans
+            return 'Diğer'
+
+        if 'position' in df_merge.columns:
+             df_merge['sade_pozisyon'] = df_merge['position'].apply(sade_pozisyon_bul)
         
         df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce', dayfirst=True)
         bugun = pd.to_datetime("today")
@@ -93,8 +123,13 @@ if not df.empty:
     else:
         secili_ligler = []
         
-    if 'position' in df.columns:
-        secili_mevkiler = st.sidebar.multiselect("Mevki Seçin", df['position'].dropna().unique(), default=df['position'].dropna().unique())
+    # --- YENİ MEVKİ FİLTRESİ VE OTOMATİK SEKME YÖNLENDİRMESİ ---
+    if 'sade_pozisyon' in df.columns:
+        mevcut_sade_mevkiler = df['sade_pozisyon'].dropna().unique()
+        # Kullanıcı sadece BİR mevki seçsin ki sekmeyi doğru yönlendirebilelim.
+        secili_mevki = st.sidebar.selectbox("Mevki Seçin", ['Tümü'] + list(mevcut_sade_mevkiler))
+    else:
+        secili_mevki = 'Tümü'
     
     u23_sart = st.sidebar.checkbox("Sadece U23 (23 Yaş ve Altı) Oyuncuları Göster", value=True)
     
@@ -108,10 +143,10 @@ if not df.empty:
     df_filtrelenmis = df.copy()
     if secili_ligler:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['league'].isin(secili_ligler)]
-    if 'position' in df.columns and secili_mevkiler:
-        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['position'].isin(secili_mevkiler)]
     
-    # U23 filtresi: Yaşı olanlarda <=23 seçer, yaşı olmayanları (kalecileri) filtre dışı bırakmaz
+    if secili_mevki != 'Tümü' and 'sade_pozisyon' in df.columns:
+        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == secili_mevki]
+    
     if u23_sart:
         df_filtrelenmis = df_filtrelenmis[(df_filtrelenmis['Age'] <= 23) | (df_filtrelenmis['Age'].isna())]
         
@@ -119,7 +154,20 @@ if not df.empty:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[azot] >= min_dakika]
 
     takim_kolonu = 'team' if 'team' in df_filtrelenmis.columns else None
-    hover_liste = [takim_kolonu, 'Age', 'position'] if takim_kolonu else ['Age', 'position']
+    hover_liste = [takim_kolonu, 'Age', 'sade_pozisyon'] if takim_kolonu else ['Age', 'sade_pozisyon']
+
+    # --- AKILLI SEKME (TABS) YÖNETİMİ ---
+    # Seçilen mevkiye göre varsayılan sekmeyi belirliyoruz
+    if secili_mevki == 'GK':
+        default_tab = 3 # Eldivenler sekmesi
+    elif secili_mevki == 'W':
+        default_tab = 1 # 10 Numaralar & Kanatlar sekmesi
+    elif secili_mevki == 'MF' or secili_mevki == 'DF':
+        default_tab = 2 # Gizli Kahramanlar sekmesi
+    elif secili_mevki == 'FW':
+         default_tab = 0 # Keskin Nişancılar sekmesi
+    else:
+        default_tab = 0
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Keskin Nişancılar (Gol & xG)", 
@@ -134,25 +182,43 @@ if not df.empty:
     df_filtrelenmis['size_tab3'] = pd.to_numeric(df_filtrelenmis['xGBuildup_90'], errors='coerce').fillna(0).clip(lower=0) + pd.to_numeric(df_filtrelenmis['xGChain_90'], errors='coerce').fillna(0).clip(lower=0) + 0.1
 
     max_baloncuk_boyutu = 12
+    
+    # Uyarı mesajı fonksiyonu
+    def sekme_uyarisi(beklenen_mevkiler, aktif_sekme_adi):
+        if secili_mevki != 'Tümü' and secili_mevki not in beklenen_mevkiler:
+             st.warning(f"Şu an **{aktif_sekme_adi}** sekmesindesiniz. Ancak soldan **{secili_mevki}** mevkisini seçtiniz. Lütfen ilgili oyuncuları görmek için uygun sekmeye geçin veya mevki filtresini değiştirin.")
 
     with tab1:
-        st.subheader("Gol vs xG (90 Dakika Başına) - Sadece Hücumcular")
-        if 'position' in df_filtrelenmis.columns:
-            df_tab1 = df_filtrelenmis[df_filtrelenmis['position'].str.contains('F', na=False)]
+        st.subheader("Gol vs xG (90 Dakika Başına) - Sadece Hücumcular (FW)")
+        sekme_uyarisi(['FW', 'W'], "Keskin Nişancılar")
+        
+        if 'sade_pozisyon' in df_filtrelenmis.columns:
+             # FW ve W'leri göster (Eğer Tümü seçiliyse zaten hepsi filtrelenmiş gelir)
+             if secili_mevki == 'Tümü':
+                 df_tab1 = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'].isin(['FW', 'W'])]
+             else:
+                 df_tab1 = df_filtrelenmis
         else:
-            df_tab1 = df_filtrelenmis
-            
+             df_tab1 = df_filtrelenmis
+
         if not df_tab1.empty and df_tab1['xG_90'].notna().any():
             fig1 = px.scatter(df_tab1, x='xG_90', y='goals_90', hover_name='player',
                               hover_data=hover_liste, color=takim_kolonu,
                               size='size_tab1', size_max=max_baloncuk_boyutu, opacity=0.7,
                               labels={'xG_90': 'Beklenen Gol (xG) - 90dk', 'goals_90': 'Atılan Gol - 90dk'})
             st.plotly_chart(fig1, use_container_width=True)
+        elif secili_mevki in ['FW', 'W'] or secili_mevki == 'Tümü':
+             st.info("Bu kriterlere uygun forvet oyuncusu bulunamadı.")
 
     with tab2:
-        st.subheader("Asist vs xA (90 Dakika Başına) - 10 Numara ve Kanatlar")
-        if 'position' in df_filtrelenmis.columns:
-            df_tab2 = df_filtrelenmis[df_filtrelenmis['position'].str.contains('M|F', na=False) & ~df_filtrelenmis['position'].str.contains('D|GK', na=False)]
+        st.subheader("Asist vs xA (90 Dakika Başına) - Kanatlar ve 10 Numaralar (W, MF)")
+        sekme_uyarisi(['W', 'MF', 'FW'], "10 Numaralar & Kanatlar")
+        
+        if 'sade_pozisyon' in df_filtrelenmis.columns:
+            if secili_mevki == 'Tümü':
+                 df_tab2 = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'].isin(['W', 'MF', 'FW'])]
+            else:
+                 df_tab2 = df_filtrelenmis
         else:
             df_tab2 = df_filtrelenmis
             
@@ -164,18 +230,33 @@ if not df.empty:
             st.plotly_chart(fig2, use_container_width=True)
 
     with tab3:
-        st.subheader("xGChain vs xGBuildup (90 Dakika Başına)")
-        if not df_filtrelenmis.empty and df_filtrelenmis['xGBuildup_90'].notna().any():
-            fig3 = px.scatter(df_filtrelenmis, x='xGBuildup_90', y='xGChain_90', hover_name='player',
+        st.subheader("xGChain vs xGBuildup (90 Dakika Başına) - Orta Saha ve Defans (MF, DF)")
+        sekme_uyarisi(['MF', 'DF', 'W'], "Gizli Kahramanlar")
+        
+        if 'sade_pozisyon' in df_filtrelenmis.columns:
+             if secili_mevki == 'Tümü':
+                  df_tab3 = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'].isin(['MF', 'DF', 'W'])]
+             else:
+                  df_tab3 = df_filtrelenmis
+        else:
+             df_tab3 = df_filtrelenmis
+
+        if not df_tab3.empty and df_tab3['xGBuildup_90'].notna().any():
+            fig3 = px.scatter(df_tab3, x='xGBuildup_90', y='xGChain_90', hover_name='player',
                               hover_data=hover_liste, color=takim_kolonu,
                               size='size_tab3', size_max=max_baloncuk_boyutu, opacity=0.7,
                               labels={'xGBuildup_90': 'Oyun Kurulumu (xGBuildup) - 90dk', 'xGChain_90': 'Hücum Katkısı (xGChain) - 90dk'})
             st.plotly_chart(fig3, use_container_width=True)
 
     with tab4:
-        st.subheader("Kurtarış Yüzdesi vs Yediği Gol (90dk) - Kaleci Analizi")
-        if 'position' in df_filtrelenmis.columns:
-            df_gk = df_filtrelenmis[df_filtrelenmis['position'].str.contains('GK', na=False)]
+        st.subheader("Kurtarış Yüzdesi vs Yediği Gol (90dk) - Sadece Kaleciler (GK)")
+        sekme_uyarisi(['GK'], "Eldivenler (Kaleciler)")
+        
+        if 'sade_pozisyon' in df_filtrelenmis.columns:
+            if secili_mevki == 'Tümü':
+                df_gk = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == 'GK']
+            else:
+                 df_gk = df_filtrelenmis # Zaten sadece GK seçiliyse hepsi GK'dir
             
             if not df_gk.empty and 'save_percent' in df_gk.columns and df_gk['save_percent'].notna().any():
                 df_gk['size_tab4'] = pd.to_numeric(df_gk['saves'], errors='coerce').fillna(0).clip(lower=0) + 0.1
@@ -186,10 +267,10 @@ if not df.empty:
                                   labels={'save_percent': 'Kurtarış Yüzdesi (%)', 'ga90': 'Yediği Gol (GA) - 90dk', 'cs': 'Clean Sheet'})
                 
                 st.plotly_chart(fig_gk, use_container_width=True)
-            else:
-                st.info("Kaleci verileri ('kaleci_verileri.csv') okundu ancak 'save_percent' veya ilgili metrikler tabloda bulunamadı.")
+            elif secili_mevki == 'GK':
+                st.info("Kaleci verileri ('kaleci_verileri.csv') okundu ancak 'save_percent' tablonuzda bulunamadı veya oyuncu eşleşmedi.")
         else:
-            st.warning("Verinizde 'position' kolonu bulunamadı.")
+            st.warning("Verinizde pozisyon kolonu bulunamadı.")
 
     with tab5:
         st.subheader("Bireysel Profil Analizi")
@@ -222,7 +303,7 @@ if not df.empty:
     st.markdown("---")
     st.subheader(f"📋 Seçili Filtrelere Göre Oyuncu Listesi ({len(df_filtrelenmis)} Oyuncu)")
     
-    gosterilecek_kolonlar = ['player', takim_kolonu, 'league', 'Age', 'position', mevcut_sure, 'xG_90', 'xA_90', 'goals_90', 'assists_90', 'save_percent', 'ga90', 'cs']
+    gosterilecek_kolonlar = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'xG_90', 'xA_90', 'goals_90', 'assists_90', 'save_percent', 'ga90', 'cs']
     mevcut_kolonlar = [col for col in gosterilecek_kolonlar if col and col in df_filtrelenmis.columns]
     
     formatlanacak_kolonlar = [col for col in ['xG_90', 'xA_90', 'goals_90', 'assists_90', 'ga90'] if col in mevcut_kolonlar]
