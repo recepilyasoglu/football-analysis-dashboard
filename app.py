@@ -22,9 +22,14 @@ def verileri_hazirla():
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_yas.columns = [col.strip().lower() for col in df_yas.columns]
         
-        df_merge = pd.merge(df_istatistik, df_yas, on='player', how='left')
+        # --- KUSURSUZ EŞLEŞTİRME (İsimlerdeki boşluk ve harf hatalarını engellemek için) ---
+        df_istatistik['merge_key'] = df_istatistik['player'].astype(str).str.lower().str.replace(' ', '')
+        df_yas['merge_key'] = df_yas['player'].astype(str).str.lower().str.replace(' ', '')
         
-        # --- KALECİ VERİSİ VE YAŞ SİSTEMİ ---
+        # Player kolonunu df_yas'tan düşüyoruz ki birleştirince player_x, player_y karmaşası olmasın
+        df_merge = pd.merge(df_istatistik, df_yas.drop(columns=['player']), on='merge_key', how='left')
+        
+        # --- KALECİ VERİSİ ---
         try:
             for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
                 try:
@@ -52,9 +57,10 @@ def verileri_hazirla():
                     df_kaleci_secili['age_gk'] = pd.to_numeric(df_kaleci_secili['age_gk'], errors='coerce')
                     df_kaleci_secili.drop(columns=['age'], inplace=True)
                 
-                df_kaleci_secili['position'] = 'GK' 
+                df_kaleci_secili['position_gk'] = 'GK' 
+                df_kaleci_secili['merge_key'] = df_kaleci_secili['player'].astype(str).str.lower().str.replace(' ', '')
                 
-                df_merge = pd.merge(df_merge, df_kaleci_secili, on='player', how='left', suffixes=('', '_gk'))
+                df_merge = pd.merge(df_merge, df_kaleci_secili.drop(columns=['player']), on='merge_key', how='left')
                 
                 if 'position_gk' in df_merge.columns:
                     df_merge['position'] = df_merge['position'].fillna(df_merge['position_gk'])
@@ -62,6 +68,9 @@ def verileri_hazirla():
 
         except Exception as e:
             pass
+        
+        # Merge key işini bitirdi, silebiliriz
+        df_merge.drop(columns=['merge_key'], inplace=True)
         
         # --- POZİSYON SADELEŞTİRME ---
         def sade_pozisyon_bul(poz_metni):
@@ -71,13 +80,13 @@ def verileri_hazirla():
             if 'GK' in p:
                 return 'GK'
             elif 'M R' in p or 'M L' in p or 'AMR' in p or 'AML' in p or 'W' in p:
-                return 'W' # Kanat
+                return 'W' 
             elif 'F' in p:
-                return 'FW' # Forvet
+                return 'FW' 
             elif 'M' in p:
-                return 'MF' # Orta Saha
+                return 'MF' 
             elif 'D' in p:
-                return 'DF' # Defans
+                return 'DF' 
             return 'Diğer'
 
         if 'position' in df_merge.columns:
@@ -91,7 +100,6 @@ def verileri_hazirla():
         if 'age_gk' in df_merge.columns:
             df_merge['Age'] = df_merge['Age'].fillna(df_merge['age_gk'])
             
-        # Yaşı daha temiz göstermek için Int64 (Boşluk destekleyen tamsayı formatı) kullanıyoruz
         df_merge['Age'] = df_merge['Age'].astype('Int64')
         
         sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
@@ -146,7 +154,6 @@ if not df.empty:
     if mevcut_sure:
         min_dakika = st.sidebar.slider("Minimum Oynama Süresi (Dakika)", 0, int(df[mevcut_sure].max()), 500)
     
-    # --- FİLTRELERİ EVRENSEL OLARAK UYGULA ---
     df_filtrelenmis = df.copy()
     if secili_ligler:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['league'].isin(secili_ligler)]
@@ -154,7 +161,6 @@ if not df.empty:
     if secili_mevki != 'Tümü' and 'sade_pozisyon' in df.columns:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == secili_mevki]
     
-    # YAŞ FİLTRESİ (Tüm sekmeler ve tüm oyuncular için kilitli)
     if u23_sart:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['Age'] <= 23]
         
@@ -162,9 +168,13 @@ if not df.empty:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[azot] >= min_dakika]
 
     takim_kolonu = 'team' if 'team' in df_filtrelenmis.columns else None
-    hover_liste = [takim_kolonu, 'Age', 'sade_pozisyon'] if takim_kolonu else ['Age', 'sade_pozisyon']
 
-    # --- AKILLI SEKME (TABS) SİSTEMİ ---
+    # Hover (Bilgi Kutucuğu) sözlüklerini temiz gösterim için ayarlıyoruz.
+    # False olanlar arka planda çalışır ama ekranda o çirkin yazıyla görünmez.
+    temel_hover = {'Age': True, 'sade_pozisyon': True}
+    if takim_kolonu:
+        temel_hover[takim_kolonu] = True
+
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Keskin Nişancılar (Gol & xG)", 
         "10 Numaralar & Kanatlar", 
@@ -196,8 +206,11 @@ if not df.empty:
              df_tab1 = df_filtrelenmis
 
         if not df_tab1.empty and df_tab1['xG_90'].notna().any():
+            hover_dict = temel_hover.copy()
+            hover_dict['size_tab1'] = False # Ekranda o çirkin ondalıklı sayıyı gizle
+            
             fig1 = px.scatter(df_tab1, x='xG_90', y='goals_90', hover_name='player',
-                              hover_data=hover_liste, color=takim_kolonu,
+                              hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab1', size_max=max_baloncuk_boyutu, opacity=0.7,
                               labels={'xG_90': 'Beklenen Gol (xG) - 90dk', 'goals_90': 'Atılan Gol - 90dk'})
             st.plotly_chart(fig1, use_container_width=True)
@@ -215,8 +228,11 @@ if not df.empty:
             df_tab2 = df_filtrelenmis
             
         if not df_tab2.empty and df_tab2['xA_90'].notna().any():
+            hover_dict = temel_hover.copy()
+            hover_dict['size_tab2'] = False
+            
             fig2 = px.scatter(df_tab2, x='xA_90', y='assists_90', hover_name='player',
-                              hover_data=hover_liste, color=takim_kolonu,
+                              hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab2', size_max=max_baloncuk_boyutu, opacity=0.7,
                               labels={'xA_90': 'Beklenen Asist (xA) - 90dk', 'assists_90': 'Yapılan Asist - 90dk'})
             st.plotly_chart(fig2, use_container_width=True)
@@ -234,8 +250,11 @@ if not df.empty:
              df_tab3 = df_filtrelenmis
 
         if not df_tab3.empty and df_tab3['xGBuildup_90'].notna().any():
+            hover_dict = temel_hover.copy()
+            hover_dict['size_tab3'] = False
+            
             fig3 = px.scatter(df_tab3, x='xGBuildup_90', y='xGChain_90', hover_name='player',
-                              hover_data=hover_liste, color=takim_kolonu,
+                              hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab3', size_max=max_baloncuk_boyutu, opacity=0.7,
                               labels={'xGBuildup_90': 'Oyun Kurulumu (xGBuildup) - 90dk', 'xGChain_90': 'Hücum Katkısı (xGChain) - 90dk'})
             st.plotly_chart(fig3, use_container_width=True)
@@ -253,8 +272,12 @@ if not df.empty:
             if not df_gk.empty and 'save_percent' in df_gk.columns and df_gk['save_percent'].notna().any():
                 df_gk['size_tab4'] = pd.to_numeric(df_gk['saves'], errors='coerce').fillna(0).clip(lower=0) + 0.1
                 
+                hover_dict = temel_hover.copy()
+                hover_dict['cs'] = True
+                hover_dict['size_tab4'] = False
+                
                 fig_gk = px.scatter(df_gk, x='save_percent', y='ga90', hover_name='player',
-                                  hover_data=hover_liste + ['cs'], color=takim_kolonu,
+                                  hover_data=hover_dict, color=takim_kolonu,
                                   size='size_tab4', size_max=max_baloncuk_boyutu, opacity=0.7,
                                   labels={'save_percent': 'Kurtarış Yüzdesi (%)', 'ga90': 'Yediği Gol (GA) - 90dk', 'cs': 'Clean Sheet'})
                 
@@ -296,7 +319,6 @@ if not df.empty:
     st.markdown("---")
     st.subheader(f"📋 Seçili Filtrelere Göre Oyuncu Listesi ({len(df_filtrelenmis)} Oyuncu)")
     
-    # Seçilen mevkiye göre Dataframe'i en mantıklı metriğe göre sıralıyoruz
     if secili_mevki == 'GK' and 'save_percent' in df_filtrelenmis.columns:
         df_filtrelenmis = df_filtrelenmis.sort_values(by='save_percent', ascending=False)
     elif secili_mevki == 'FW' and 'goals_90' in df_filtrelenmis.columns:
@@ -306,7 +328,6 @@ if not df.empty:
     elif secili_mevki in ['MF', 'DF'] and 'xGBuildup_90' in df_filtrelenmis.columns:
         df_filtrelenmis = df_filtrelenmis.sort_values(by=['xGBuildup_90', 'xGChain_90'], ascending=[False, False])
     else:
-        # Tümü seçiliyse süreye göre sırala (en çok oynayanlar üstte)
         if mevcut_sure and mevcut_sure in df_filtrelenmis.columns:
             df_filtrelenmis = df_filtrelenmis.sort_values(by=mevcut_sure, ascending=False)
             
