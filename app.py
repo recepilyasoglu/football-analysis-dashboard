@@ -12,10 +12,8 @@ st.title("⚽ Dinamik Oyuncu Scout Panosu")
 @st.cache_data
 def verileri_hazirla():
     try:
-        # Ana istatistik verisi
         df_istatistik = pd.read_csv('otomatik_understat_verileri.csv') 
         
-        # Yaş verisi
         try:
             df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='utf-8-sig')
         except UnicodeDecodeError:
@@ -24,38 +22,36 @@ def verileri_hazirla():
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_yas.columns = [col.strip().lower() for col in df_yas.columns]
         
-        # 1. Birleştirme: Ana veri + Yaşlar
         df_merge = pd.merge(df_istatistik, df_yas, on='player', how='left')
         
-        # --- YENİ: DIŞARIDAN KALECİ VERİSİ (FBref) ENTEGRASYONU ---
+        # --- KALECİ VERİSİ ENTEGRASYONU (HATA RİSKİNE KARŞI GÜÇLENDİRİLDİ) ---
         try:
-            # Karakter kodlaması hatalarını (0xed invalid continuation byte) önlemek için çoklu deneme
-            try:
-                df_kaleci = pd.read_csv('kaleci_verileri.csv', encoding='utf-8-sig')
-            except UnicodeDecodeError:
+            for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
                 try:
-                    df_kaleci = pd.read_csv('kaleci_verileri.csv', encoding='windows-1254')
+                    df_kaleci = pd.read_csv('kaleci_verileri.csv', encoding=enc)
+                    break
                 except UnicodeDecodeError:
-                    df_kaleci = pd.read_csv('kaleci_verileri.csv', encoding='latin1')
+                    continue
             
-            # FBref'in çoklu başlık (multi-index) yapısını veya özel karakterlerini temizleme
+            # Sütun isimlerini küçük harfe çevir ve boşlukları temizle
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
             
-            # Kaleci dosyasından sadece işimize yarayacak değerli kolonları alıyoruz
-            beklenen_kaleci_kolonlari = ['player', 'ga', 'ga90', 'saves', 'save_percent', 'cs']
-            mevcut_kaleci_kolonlari = [col for col in beklenen_kaleci_kolonlari if col in df_kaleci.columns]
+            # Eğer 'player' sütunu yoksa ama 'Unnamed: 1' veya benzeri bir şey varsa player yap
+            if 'player' not in df_kaleci.columns:
+                for col in df_kaleci.columns:
+                    if 'player' in col or 'oyuncu' in col:
+                        df_kaleci.rename(columns={col: 'player'}, inplace=True)
+                        break
             
-            if 'player' in mevcut_kaleci_kolonlari:
+            if 'player' in df_kaleci.columns:
+                beklenen_kaleci_kolonlari = ['player', 'ga', 'ga90', 'saves', 'save_percent', 'cs']
+                mevcut_kaleci_kolonlari = [col for col in beklenen_kaleci_kolonlari if col in df_kaleci.columns]
+                
                 df_kaleci_secili = df_kaleci[mevcut_kaleci_kolonlari]
-                # 2. Birleştirme: Mevcut veri + Kaleci Metrikleri
                 df_merge = pd.merge(df_merge, df_kaleci_secili, on='player', how='left')
-        except FileNotFoundError:
-            pass # Kaleci verisi henüz yoksa sessizce geç
         except Exception as e:
-            st.warning(f"Kaleci verisi okunurken ufak bir pürüz çıktı: {e}")
             pass
         
-        # Yaş Hesaplama
         df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce', dayfirst=True)
         bugun = pd.to_datetime("today")
         df_merge['Age'] = (bugun - df_merge['birth_date']).dt.days // 365
@@ -63,7 +59,6 @@ def verileri_hazirla():
         sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
         mevcut_sure = next((col for col in sure_kolonlari if col in df_merge.columns), None)
         
-        # Normal oyuncuların Per 90 hesaplamaları
         metrikler_map = {
             'xg': 'xG_90', 'xa': 'xA_90', 'shots': 'shots_90', 
             'key_passes': 'key_passes_90', 'xgchain': 'xGChain_90', 
@@ -85,13 +80,12 @@ def verileri_hazirla():
 
         return df_merge
     except Exception as e:
-        st.error(f"Ana Veri yüklenirken hata oluştu: {e}")
+        st.error(f"Veri yüklenirken hata oluştu: {e}")
         return pd.DataFrame()
 
 df = verileri_hazirla()
 
 if not df.empty:
-    # --- 3. YAN MENÜ VE FİLTRELER ---
     st.sidebar.header("🔍 Filtreleme Seçenekleri")
     
     if 'league' in df.columns:
@@ -116,15 +110,17 @@ if not df.empty:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['league'].isin(secili_ligler)]
     if 'position' in df.columns and secili_mevkiler:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['position'].isin(secili_mevkiler)]
+    
+    # U23 filtresi: Yaşı olanlarda <=23 seçer, yaşı olmayanları (kalecileri) filtre dışı bırakmaz
     if u23_sart:
-        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['Age'] <= 23]
-    if mevcut_sure:
-        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[mevcut_sure] >= min_dakika]
+        df_filtrelenmis = df_filtrelenmis[(df_filtrelenmis['Age'] <= 23) | (df_filtrelenmis['Age'].isna())]
+        
+    if azot := mevcut_sure:
+        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[azot] >= min_dakika]
 
     takim_kolonu = 'team' if 'team' in df_filtrelenmis.columns else None
     hover_liste = [takim_kolonu, 'Age', 'position'] if takim_kolonu else ['Age', 'position']
 
-    # --- 4. SEKME YAPISI ---
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Keskin Nişancılar (Gol & xG)", 
         "10 Numaralar & Kanatlar", 
@@ -189,12 +185,11 @@ if not df.empty:
                                   size='size_tab4', size_max=max_baloncuk_boyutu, opacity=0.7,
                                   labels={'save_percent': 'Kurtarış Yüzdesi (%)', 'ga90': 'Yediği Gol (GA) - 90dk', 'cs': 'Clean Sheet'})
                 
-                fig_gk.update_layout(xaxis=dict(autorange="reversed"))
                 st.plotly_chart(fig_gk, use_container_width=True)
             else:
-                st.info("Bu grafiği görmek için 'kaleci_verileri.csv' dosyasının dizinde olduğundan emin olun.")
+                st.info("Kaleci verileri ('kaleci_verileri.csv') okundu ancak 'save_percent' veya ilgili metrikler tabloda bulunamadı.")
         else:
-            st.warning("Verinizde 'position' kolonu bulunmadığı için kaleciler filtrelenemedi.")
+            st.warning("Verinizde 'position' kolonu bulunamadı.")
 
     with tab5:
         st.subheader("Bireysel Profil Analizi")
