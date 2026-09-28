@@ -8,20 +8,20 @@ from datetime import datetime
 st.set_page_config(page_title="Scout Pano", layout="wide")
 st.title("⚽ Dinamik Oyuncu Scout Panosu")
 
-# --- 2. VERİ YÜKLEME VE İŞLEME (Kurşun Geçirmez Hata Yönetimi) ---
+# --- 2. VERİ YÜKLEME VE İŞLEME ---
 @st.cache_data
 def verileri_hazirla():
     try:
-        df_istatistik = pd.read_csv('otomatik_understat_verileri.csv') 
+        df_istatistik = pd.read_csv('otomatik_understat_veri.csv') 
         
         try:
             df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='utf-8-sig')
         except UnicodeDecodeError:
             df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='windows-1254')
         
-        # 'player' kolonu yoksa çökmesini engellemek için küçük harfe çevirme
-        df_istatistik.columns = [col.strip() for col in df_istatistik.columns]
-        df_yas.columns = [col.strip() for col in df_yas.columns]
+        # HAYAT KURTARAN DOKUNUŞ: Sütun isimlerindeki büyük/küçük harf karmaşasını bitirmek için hepsini küçük harf yapıyoruz
+        df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
+        df_yas.columns = [col.strip().lower() for col in df_yas.columns]
         
         df_merge = pd.merge(df_istatistik, df_yas, on='player', how='inner')
         
@@ -29,26 +29,36 @@ def verileri_hazirla():
         bugun = pd.to_datetime("today")
         df_merge['Age'] = (bugun - df_merge['birth_date']).dt.days // 365
         
-        # --- DİNAMİK PER 90 HESAPLAMALARI ---
-        # Veri setindeki süre kolonunu otomatik bul
-        sure_kolonlari = ['time', 'minutes', 'Min', 'dakika', 'Süre', 'mins']
+        # --- PER 90 HESAPLAMALARI ---
+        sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
         mevcut_sure = next((col for col in sure_kolonlari if col in df_merge.columns), None)
         
-        metrikler = ['xG', 'xA', 'shots', 'key_passes', 'xGChain', 'xGBuildup', 'goals', 'assists']
+        # Artık kolonları 'xg', 'xa' diye küçük harfle arıyoruz
+        metrikler_map = {
+            'xg': 'xG_90',
+            'xa': 'xA_90',
+            'shots': 'shots_90',
+            'key_passes': 'key_passes_90',
+            'xgchain': 'xGChain_90',
+            'xgbuildup': 'xGBuildup_90',
+            'goals': 'goals_90',
+            'assists': 'assists_90'
+        }
         
-        for m in metrikler:
-            per90_adi = f"{m}_90"
-            if m in df_merge.columns:
+        for ham_kolon, per90_adi in metrikler_map.items():
+            if ham_kolon in df_merge.columns:
                 if mevcut_sure:
-                    # 0'a bölme hatasını engellemek için 0'ları 1 yapıyoruz
+                    # Süre 0 ise 1 yap (Sıfıra bölünme hatasını engellemek için)
                     sure_carpan = 90 / df_merge[mevcut_sure].replace(0, 1)
-                    df_merge[per90_adi] = round(df_merge[m] * sure_carpan, 2)
+                    df_merge[per90_adi] = round(df_merge[ham_kolon] * sure_carpan, 2)
                 else:
-                    # Süre kolonu yoksa çökmesin, ham veriyi kullansın
-                    df_merge[per90_adi] = df_merge[m]
+                    df_merge[per90_adi] = df_merge[ham_kolon]
             else:
-                # Kolon komple yoksa 0 bas
                 df_merge[per90_adi] = 0
+
+        # Eğer takım kolonu 'team_title' diye geldiyse onu standart 'team' yapalım
+        if 'team_title' in df_merge.columns:
+            df_merge.rename(columns={'team_title': 'team'}, inplace=True)
 
         return df_merge
     except Exception as e:
@@ -68,8 +78,7 @@ if not df.empty:
     
     u23_sart = st.sidebar.checkbox("Sadece U23 (23 Yaş ve Altı) Oyuncuları Göster", value=True)
     
-    # Süre kolonu dinamik bulunduğu için o isimle filtreleyelim
-    sure_kolonlari = ['time', 'minutes', 'Min', 'dakika', 'Süre', 'mins']
+    sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
     mevcut_sure = next((col for col in sure_kolonlari if col in df.columns), None)
     
     min_dakika = 0
@@ -84,8 +93,7 @@ if not df.empty:
     if mevcut_sure:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[mevcut_sure] >= min_dakika]
 
-    # Takım kolonunun adını sağlama alalım (team veya team_title olabilir)
-    takim_kolonu = 'team' if 'team' in df_filtrelenmis.columns else ('team_title' if 'team_title' in df_filtrelenmis.columns else None)
+    takim_kolonu = 'team' if 'team' in df_filtrelenmis.columns else None
     hover_liste = [takim_kolonu, 'Age'] if takim_kolonu else ['Age']
 
     # --- 4. SEKME (TAB) YAPISI ---
