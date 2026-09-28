@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import unicodedata
+import difflib
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Scout Pano", layout="wide")
@@ -29,14 +30,45 @@ def verileri_hazirla():
         except UnicodeDecodeError:
             df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='windows-1254')
         
+        # Sütunları küçük harfe çevir
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_yas.columns = [col.strip().lower() for col in df_yas.columns]
         
         df_istatistik['merge_key'] = df_istatistik['player'].apply(isim_temizle)
         df_yas['merge_key'] = df_yas['player'].apply(isim_temizle)
         
+        # --- FUZZY MATCHING (BULANIK EŞLEŞTİRME) ---
+        yas_isimleri = df_yas['merge_key'].dropna().tolist()
+        
+        # Eğer Understat'taki isim yaş dosyasında birebir yoksa, en çok benzeyeni (%75+ benzer) bul
+        def bulanik_eslestir(isim):
+            if isim in yas_isimleri:
+                return isim
+            eslesmeler = difflib.get_close_matches(isim, yas_isimleri, n=1, cutoff=0.75)
+            if eslesmeler:
+                return eslesmeler[0] # Örneğin "kylianmbappelottin" için "kylianmbappe" yi döndürür
+            return isim
+            
+        df_istatistik['merge_key'] = df_istatistik['merge_key'].apply(bulanik_eslestir)
+        
         df_merge = pd.merge(df_istatistik, df_yas.drop(columns=['player']), on='merge_key', how='left')
         
+        # --- AKILLI YAŞ OKUYUCU (Tüm formatları destekler) ---
+        df_merge['Age'] = pd.NA
+        
+        if 'age' in df_merge.columns:
+            # Kaggle/FBref formatı (Örn: 25-132)
+            df_merge['Age'] = df_merge['age'].astype(str).str.split('-').str[0]
+            df_merge['Age'] = pd.to_numeric(df_merge['Age'], errors='coerce')
+        elif 'born' in df_merge.columns:
+            # Kaggle Doğum Yılı formatı (Örn: 1998)
+            df_merge['Age'] = datetime.today().year - pd.to_numeric(df_merge['born'], errors='coerce')
+        elif 'birth_date' in df_merge.columns:
+            # Eski Klasik Format
+            df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce', dayfirst=True)
+            bugun = pd.to_datetime("today")
+            df_merge['Age'] = (bugun - df_merge['birth_date']).dt.days // 365
+            
         # --- KALECİ VERİSİ ---
         try:
             for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
@@ -67,17 +99,22 @@ def verileri_hazirla():
                 
                 df_kaleci_secili['position_gk'] = 'GK' 
                 df_kaleci_secili['merge_key'] = df_kaleci_secili['player'].apply(isim_temizle)
+                df_kaleci_secili['merge_key'] = df_kaleci_secili['merge_key'].apply(bulanik_eslestir)
                 
                 df_merge = pd.merge(df_merge, df_kaleci_secili.drop(columns=['player']), on='merge_key', how='left')
                 
                 if 'position_gk' in df_merge.columns:
                     df_merge['position'] = df_merge['position'].fillna(df_merge['position_gk'])
                     df_merge.drop(columns=['position_gk'], inplace=True)
+                    
+                if 'age_gk' in df_merge.columns:
+                    df_merge['Age'] = df_merge['Age'].fillna(df_merge['age_gk'])
 
         except Exception as e:
             pass
         
         df_merge.drop(columns=['merge_key'], inplace=True)
+        df_merge['Age'] = df_merge['Age'].astype('Int64')
         
         # --- POZİSYON SADELEŞTİRME ---
         def sade_pozisyon_bul(poz_metni):
@@ -98,16 +135,6 @@ def verileri_hazirla():
 
         if 'position' in df_merge.columns:
              df_merge['sade_pozisyon'] = df_merge['position'].apply(sade_pozisyon_bul)
-        
-        # --- GENEL YAŞ HESAPLAMA ---
-        df_merge['birth_date'] = pd.to_datetime(df_merge['birth_date'], errors='coerce', dayfirst=True)
-        bugun = pd.to_datetime("today")
-        df_merge['Age'] = (bugun - df_merge['birth_date']).dt.days // 365
-        
-        if 'age_gk' in df_merge.columns:
-            df_merge['Age'] = df_merge['Age'].fillna(df_merge['age_gk'])
-            
-        df_merge['Age'] = df_merge['Age'].astype('Int64')
         
         sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
         mevcut_sure = next((col for col in sure_kolonlari if col in df_merge.columns), None)
@@ -169,7 +196,7 @@ if not df.empty:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == secili_mevki]
     
     if u23_sart:
-        # Geçici Çözüm: Yaşı None olanları kaybetmemek için filtreye dahil ediyoruz
+        # Geçici Çözüm: Dosyada hiç var olmayanlar kaybolmasın diye Null olanları bırakıyoruz
         df_filtrelenmis = df_filtrelenmis[(df_filtrelenmis['Age'] <= 23) | (df_filtrelenmis['Age'].isna())]
         
     if azot := mevcut_sure:
