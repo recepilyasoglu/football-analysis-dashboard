@@ -3,10 +3,23 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+import unicodedata
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Scout Pano", layout="wide")
 st.title("⚽ Dinamik Oyuncu Scout Panosu")
+
+# --- AKSAN TEMİZLEYİCİ FONKSİYON ---
+def isim_temizle(isim):
+    if pd.isna(isim):
+        return ""
+    # 1. String'e çevir, boşlukları sil, küçük harf yap
+    temiz = str(isim).strip().lower().replace(' ', '')
+    # 2. Aksanlı karakterleri (é, í, ä vb.) düz İngilizce harflere çevir
+    temiz = ''.join(c for c in unicodedata.normalize('NFD', temiz) if unicodedata.category(c) != 'Mn')
+    # 3. Bazı özel harfleri (örn: İspanyolca ñ veya Türkçe ı, İ) manuel düzelt
+    temiz = temiz.replace('ı', 'i').replace('ö', 'o').replace('ü', 'u').replace('ş', 's').replace('ğ', 'g').replace('ç', 'c')
+    return temiz
 
 # --- 2. VERİ YÜKLEME VE İŞLEME ---
 @st.cache_data
@@ -22,11 +35,10 @@ def verileri_hazirla():
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_yas.columns = [col.strip().lower() for col in df_yas.columns]
         
-        # --- KUSURSUZ EŞLEŞTİRME (İsimlerdeki boşluk ve harf hatalarını engellemek için) ---
-        df_istatistik['merge_key'] = df_istatistik['player'].astype(str).str.lower().str.replace(' ', '')
-        df_yas['merge_key'] = df_yas['player'].astype(str).str.lower().str.replace(' ', '')
+        # --- KUSURSUZ EŞLEŞTİRME (Aksan ve Boşluk Temizliği) ---
+        df_istatistik['merge_key'] = df_istatistik['player'].apply(isim_temizle)
+        df_yas['merge_key'] = df_yas['player'].apply(isim_temizle)
         
-        # Player kolonunu df_yas'tan düşüyoruz ki birleştirince player_x, player_y karmaşası olmasın
         df_merge = pd.merge(df_istatistik, df_yas.drop(columns=['player']), on='merge_key', how='left')
         
         # --- KALECİ VERİSİ ---
@@ -58,7 +70,7 @@ def verileri_hazirla():
                     df_kaleci_secili.drop(columns=['age'], inplace=True)
                 
                 df_kaleci_secili['position_gk'] = 'GK' 
-                df_kaleci_secili['merge_key'] = df_kaleci_secili['player'].astype(str).str.lower().str.replace(' ', '')
+                df_kaleci_secili['merge_key'] = df_kaleci_secili['player'].apply(isim_temizle)
                 
                 df_merge = pd.merge(df_merge, df_kaleci_secili.drop(columns=['player']), on='merge_key', how='left')
                 
@@ -69,7 +81,6 @@ def verileri_hazirla():
         except Exception as e:
             pass
         
-        # Merge key işini bitirdi, silebiliriz
         df_merge.drop(columns=['merge_key'], inplace=True)
         
         # --- POZİSYON SADELEŞTİRME ---
@@ -169,8 +180,6 @@ if not df.empty:
 
     takim_kolonu = 'team' if 'team' in df_filtrelenmis.columns else None
 
-    # Hover (Bilgi Kutucuğu) sözlüklerini temiz gösterim için ayarlıyoruz.
-    # False olanlar arka planda çalışır ama ekranda o çirkin yazıyla görünmez.
     temel_hover = {'Age': True, 'sade_pozisyon': True}
     if takim_kolonu:
         temel_hover[takim_kolonu] = True
@@ -207,7 +216,7 @@ if not df.empty:
 
         if not df_tab1.empty and df_tab1['xG_90'].notna().any():
             hover_dict = temel_hover.copy()
-            hover_dict['size_tab1'] = False # Ekranda o çirkin ondalıklı sayıyı gizle
+            hover_dict['size_tab1'] = False 
             
             fig1 = px.scatter(df_tab1, x='xG_90', y='goals_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
@@ -315,7 +324,6 @@ if not df.empty:
                 )
                 st.plotly_chart(fig4, use_container_width=True)
 
-    # --- AKILLI TABLO SIRALAMA ---
     st.markdown("---")
     st.subheader(f"📋 Seçili Filtrelere Göre Oyuncu Listesi ({len(df_filtrelenmis)} Oyuncu)")
     
