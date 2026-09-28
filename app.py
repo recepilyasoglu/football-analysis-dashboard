@@ -12,7 +12,7 @@ st.title("⚽ Dinamik Oyuncu Scout Panosu")
 @st.cache_data
 def verileri_hazirla():
     try:
-        df_istatistik = pd.read_csv('otomatik_understat_veri.csv') 
+        df_istatistik = pd.read_csv('otomatik_understat_verileri.csv') 
         
         try:
             df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='utf-8-sig')
