@@ -55,7 +55,7 @@ def verileri_hazirla():
             df_yas['hesaplanan_yas'] = pd.to_numeric(df_yas['hesaplanan_yas'], errors='coerce')
             yas_sozlugu = dict(zip(df_yas['merge_key'], df_yas['hesaplanan_yas']))
 
-        # VIP Oyuncu Listesi (Tek isimler dahil güçlendirildi)
+        # VIP Oyuncu Listesi
         vip_yaslar = {
             'kylianmbappelottin': 27, 'lautaromartinez': 29, 'donyellmalen': 27,
             'yassirzabiri': 21, 'sergiocamello': 25, 'gustavovarela': 21,
@@ -131,7 +131,7 @@ def verileri_hazirla():
             return 'Diğer'
 
         if 'position' in df_istatistik.columns:
-             df_istatistik['sade_pozisyon'] = df_istististik['position'].apply(sade_pozisyon_bul)
+             df_istatistik['sade_pozisyon'] = df_istatistik['position'].apply(sade_pozisyon_bul)
              
         sure_kolonlari = ['time', 'minutes', 'min', 'dakika', 'süre', 'mins']
         mevcut_sure = next((col for col in sure_kolonlari if col in df_istatistik.columns), None)
@@ -148,7 +148,7 @@ def verileri_hazirla():
                     carpan = 90 / df_istatistik[mevcut_sure].replace(0, 1)
                     df_istatistik[p90] = round(df_istatistik[ham] * carpan, 2)
                 else:
-                    df_istatistik[p90] = df_istististik[ham]
+                    df_istatistik[p90] = df_istatistik[ham]
             else:
                 df_istatistik[p90] = None
 
@@ -211,7 +211,6 @@ if not df.empty:
         "🎯 Oyuncu Analiz Radarı"
     ])
 
-    # Eksik değerleri temizle ki grafikler patlamasın
     df_filtrelenmis['xG_90'] = pd.to_numeric(df_filtrelenmis['xG_90'], errors='coerce').fillna(0)
     df_filtrelenmis['goals_90'] = pd.to_numeric(df_filtrelenmis['goals_90'], errors='coerce').fillna(0)
     df_filtrelenmis['xA_90'] = pd.to_numeric(df_filtrelenmis['xA_90'], errors='coerce').fillna(0)
