@@ -6,6 +6,7 @@ from datetime import datetime
 import unicodedata
 import re
 import os
+import difflib
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Scout Pano", layout="wide")
@@ -79,7 +80,6 @@ def verileri_hazirla():
                     if 'born' in age_col or 'doğum' in age_col:
                         df_yas['hesaplanan_yas'] = bugun.year - pd.to_numeric(df_yas[age_col], errors='coerce')
                     elif 'date' in age_col or 'tarih' in age_col or 'dob' in age_col:
-                        # HATA BURADAYDI! Amerikan formatı (Ay/Gün/Yıl) olduğu için dayfirst=True kaldırıldı.
                         df_yas[age_col] = pd.to_datetime(df_yas[age_col], errors='coerce')
                         df_yas['hesaplanan_yas'] = (bugun - df_yas[age_col]).dt.days // 365
                     else:
@@ -93,25 +93,38 @@ def verileri_hazirla():
             'yassirzabiri': 21, 'sergiocamello': 25, 'gustavovarela': 21,
             'philliptietz': 29, 'lamineyamal': 19, 'erlinghaaland': 26,
             'raphinha': 29, 'mariano': 30, 'martinsatriano': 23, 
-            'eduexposito': 28, 'lukasucic': 22, 'davidhancko': 26, 'orelmangala': 26
+            'eduexposito': 28, 'lukasucic': 22, 'davidhancko': 26, 'orelmangala': 26,
+            'ximonavarro': 36, 'djenedakonam': 34, 'papealassanegueye': 27
         }
         
         yeni_yaslar = []
+        yas_keys = list(yas_sozlugu.keys())
+        
         for p in df_istatistik['merge_key']:
+            # 1. VIP Liste (Anında Eşleşme)
             if p in vip_yaslar:
                 yeni_yaslar.append(vip_yaslar[p])
+            # 2. Birebir Aynı İsim
             elif p in yas_sozlugu and pd.notna(yas_sozlugu[p]):
                 yeni_yaslar.append(yas_sozlugu[p])
             else:
                 bulundu = False
+                # 3. Alt Dize (İçinde Geçme) Mantığı
                 for y_p, y_age in yas_sozlugu.items():
                     if pd.notna(y_age) and len(y_p) > 3 and len(p) > 3:
                         if y_p in p or p in y_p:
                             yeni_yaslar.append(y_age)
                             bulundu = True
                             break
+                            
+                # 4. YENİ: Yapay Zeka Benzerlik Algoritması (Bulanık Eşleştirme)
                 if not bulundu:
-                    yeni_yaslar.append(pd.NA)
+                    # %80 benzerlik gösteren isimleri avla
+                    en_iyi_eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.8)
+                    if en_iyi_eslesme and pd.notna(yas_sozlugu[en_iyi_eslesme[0]]):
+                        yeni_yaslar.append(yas_sozlugu[en_iyi_eslesme[0]])
+                    else:
+                        yeni_yaslar.append(pd.NA)
                     
         df_istatistik['Age'] = yeni_yaslar
         
