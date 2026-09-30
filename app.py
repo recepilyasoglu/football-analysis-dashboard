@@ -55,7 +55,6 @@ def verileri_hazirla():
             df_yas['hesaplanan_yas'] = pd.to_numeric(df_yas['hesaplanan_yas'], errors='coerce')
             yas_sozlugu = dict(zip(df_yas['merge_key'], df_yas['hesaplanan_yas']))
 
-        # VIP Oyuncu Listesi
         vip_yaslar = {
             'kylianmbappelottin': 27, 'lautaromartinez': 29, 'donyellmalen': 27,
             'yassirzabiri': 21, 'sergiocamello': 25, 'gustavovarela': 21,
@@ -82,7 +81,6 @@ def verileri_hazirla():
                     
         df_istatistik['Age'] = yeni_yaslar
         
-        # Kaleci Verisi
         try:
             for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
                 try:
@@ -242,10 +240,19 @@ if not df.empty:
         if not df_tab1.empty:
             hover_dict = temel_hover.copy()
             hover_dict['size_tab1'] = False 
+            
+            # --- YENİ EKLENTİ: Atılan Gollerin Grafik Üzerinde Görünmesi ---
+            if 'goals' in df_tab1.columns:
+                hover_dict['goals'] = True
+                
             fig1 = px.scatter(df_tab1, x='xG_90', y='goals_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab1', size_max=max_baloncuk_boyutu, opacity=0.7,
-                              labels={'xG_90': 'Beklenen Gol (xG) - 90dk', 'goals_90': 'Atılan Gol - 90dk'})
+                              text='goals' if 'goals' in df_tab1.columns else None, # Golleri metin olarak ekle
+                              labels={'xG_90': 'Beklenen Gol (xG) - 90dk', 'goals_90': 'Atılan Gol - 90dk', 'goals': 'Toplam Gol'})
+            
+            # Metinlerin hizalamasını ve boyutunu ayarla
+            fig1.update_traces(textposition='top center', textfont=dict(color='white', size=11))
             st.plotly_chart(fig1, use_container_width=True)
 
     with tab2:
@@ -358,5 +365,11 @@ if not df.empty:
     gosterilecek_kolonlar = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'xG_90', 'xA_90', 'goals_90', 'assists_90', 'save_percent', 'ga90', 'cs']
     mevcut_kolonlar = [col for col in gosterilecek_kolonlar if col and col in df_filtrelenmis.columns]
     
+    # --- YENİ EKLENTİ: Ekranda Çirkin 'None' Yazmasını Engelle ---
+    df_gosterim = df_filtrelenmis[mevcut_kolonlar].copy()
+    if 'Age' in df_gosterim.columns:
+        # Yaşı boş olanları -1 yap, stringe çevir ve ekranda 'Bilinmiyor' olarak göster
+        df_gosterim['Age'] = df_gosterim['Age'].fillna(-1).astype(int).astype(str).replace('-1', 'Bilinmiyor')
+    
     formatlanacak_kolonlar = [col for col in ['xG_90', 'xA_90', 'goals_90', 'assists_90', 'ga90'] if col in mevcut_kolonlar]
-    st.dataframe(df_filtrelenmis[mevcut_kolonlar].style.format({col: '{:.2f}' for col in formatlanacak_kolonlar}))
+    st.dataframe(df_gosterim.style.format({col: '{:.2f}' for col in formatlanacak_kolonlar}))
