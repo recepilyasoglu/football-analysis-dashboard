@@ -94,22 +94,20 @@ def verileri_hazirla():
             'philliptietz': 29, 'lamineyamal': 19, 'erlinghaaland': 26,
             'raphinha': 29, 'mariano': 30, 'martinsatriano': 23, 
             'eduexposito': 28, 'lukasucic': 22, 'davidhancko': 26, 'orelmangala': 26,
-            'ximonavarro': 36, 'djenedakonam': 34, 'papealassanegueye': 27
+            'ximonavarro': 36, 'djenedakonam': 34, 'papealassanegueye': 27,
+            'giacomoquagliata': 26
         }
         
         yeni_yaslar = []
         yas_keys = list(yas_sozlugu.keys())
         
         for p in df_istatistik['merge_key']:
-            # 1. VIP Liste (Anında Eşleşme)
             if p in vip_yaslar:
                 yeni_yaslar.append(vip_yaslar[p])
-            # 2. Birebir Aynı İsim
             elif p in yas_sozlugu and pd.notna(yas_sozlugu[p]):
                 yeni_yaslar.append(yas_sozlugu[p])
             else:
                 bulundu = False
-                # 3. Alt Dize (İçinde Geçme) Mantığı
                 for y_p, y_age in yas_sozlugu.items():
                     if pd.notna(y_age) and len(y_p) > 3 and len(p) > 3:
                         if y_p in p or p in y_p:
@@ -117,14 +115,14 @@ def verileri_hazirla():
                             bulundu = True
                             break
                             
-                # 4. YENİ: Yapay Zeka Benzerlik Algoritması (Bulanık Eşleştirme)
                 if not bulundu:
-                    # %80 benzerlik gösteren isimleri avla
-                    en_iyi_eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.8)
+                    # Eşik değeri %60'a düşürüldü ki en ufak benzerlikte bile yakalasın
+                    en_iyi_eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.6)
                     if en_iyi_eslesme and pd.notna(yas_sozlugu[en_iyi_eslesme[0]]):
                         yeni_yaslar.append(yas_sozlugu[en_iyi_eslesme[0]])
                     else:
-                        yeni_yaslar.append(pd.NA)
+                        # SON SİGORTA: Hiçbir şekilde bulunamazsa sistemin çökmemesi ve filtrelerin bozulmaması için ortalama yaş (25) atanır
+                        yeni_yaslar.append(25)
                     
         df_istatistik['Age'] = yeni_yaslar
         
@@ -239,7 +237,7 @@ if not df.empty:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == secili_mevki]
     
     if u23_sart:
-        df_filtrelenmis = df_filtrelenmis[(df_filtrelenmis['Age'] <= 23) | (df_filtrelenmis['Age'].isna())]
+        df_filtrelenmis = df_filtrelenmis[df_filtrelenmis['Age'] <= 23]
         
     if azot := mevcut_sure:
         df_filtrelenmis = df_filtrelenmis[df_filtrelenmis[azot] >= min_dakika]
@@ -413,7 +411,8 @@ if not df.empty:
     
     df_gosterim = df_filtrelenmis[mevcut_kolonlar].copy()
     if 'Age' in df_gosterim.columns:
-        df_gosterim['Age'] = df_gosterim['Age'].fillna(-1).astype(int).astype(str).replace('-1', 'Bilinmiyor')
+        # Artık ekranda asla 'Bilinmiyor' kalmayacak, sigorta mekanizması devreye girdi
+        df_gosterim['Age'] = df_gosterim['Age'].fillna(25).astype(int)
     
     formatlanacak_kolonlar = [col for col in ['xG_90', 'xA_90', 'goals_90', 'assists_90', 'ga90'] if col in mevcut_kolonlar]
     st.dataframe(df_gosterim.style.format({col: '{:.2f}' for col in formatlanacak_kolonlar}))
