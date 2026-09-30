@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import unicodedata
 import re
+import os
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Scout Pano", layout="wide")
@@ -23,43 +24,76 @@ def super_temizle(isim):
 @st.cache_data
 def verileri_hazirla():
     try:
+        # 1. UNDERSTAT İSTATİSTİKLERİ
         df_istatistik = pd.read_csv('otomatik_understat_verileri.csv') 
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_istatistik['merge_key'] = df_istatistik['player'].apply(super_temizle)
         
+        # 2. AKILLI YAŞ OKUYUCU
         df_yas = pd.DataFrame()
-        try:
-            df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='utf-8-sig')
-        except:
-            try:
-                df_yas = pd.read_csv('oyuncu_dogum_tarihleri.csv', encoding='windows-1254')
-            except:
-                pass
+        yas_dosyasi = None
         
-        yas_sozlugu = {}
-        if not df_yas.empty:
-            df_yas.columns = [col.strip().lower() for col in df_yas.columns]
-            df_yas['merge_key'] = df_yas['player'].apply(super_temizle)
-            
-            bugun = pd.to_datetime("today")
-            if 'age' in df_yas.columns:
-                df_yas['hesaplanan_yas'] = df_yas['age'].astype(str).str.split('-').str[0]
-            elif 'born' in df_yas.columns:
-                df_yas['hesaplanan_yas'] = bugun.year - pd.to_numeric(df_yas['born'], errors='coerce')
-            elif 'birth_date' in df_yas.columns:
-                df_yas['birth_date'] = pd.to_datetime(df_yas['birth_date'], errors='coerce', dayfirst=True)
-                df_yas['hesaplanan_yas'] = (bugun - df_yas['birth_date']).dt.days // 365
-            else:
-                df_yas['hesaplanan_yas'] = pd.NA
+        for file in os.listdir():
+            if file.lower().endswith('oyuncu_dogum_tarihleri.csv'):
+                yas_dosyasi = file
+                break
                 
-            df_yas['hesaplanan_yas'] = pd.to_numeric(df_yas['hesaplanan_yas'], errors='coerce')
-            yas_sozlugu = dict(zip(df_yas['merge_key'], df_yas['hesaplanan_yas']))
+        yas_sozlugu = {}
+        if yas_dosyasi:
+            for enc in ['utf-8', 'utf-8-sig', 'windows-1254', 'latin1']:
+                try:
+                    df_yas = pd.read_csv(yas_dosyasi, encoding=enc, sep=None, engine='python', on_bad_lines='skip')
+                    if not df_yas.empty:
+                        break
+                except:
+                    continue
+            
+            if not df_yas.empty:
+                if isinstance(df_yas.columns, pd.MultiIndex):
+                    df_yas.columns = ['_'.join(map(str, col)).strip() for col in df_yas.columns]
+                    
+                df_yas.columns = [str(col).strip().lower() for col in df_yas.columns]
+                
+                player_col = None
+                for col in df_yas.columns:
+                    if col in ['player', 'oyuncu', 'isim', 'name', 'player_name', 'futbolcu']:
+                        player_col = col; break
+                if not player_col:
+                    for col in df_yas.columns:
+                        if 'player' in col or 'oyuncu' in col or 'isim' in col or 'name' in col:
+                            player_col = col; break
+                            
+                age_col = None
+                for col in df_yas.columns:
+                    if col in ['age', 'born', 'yas', 'yaş', 'birth_date', 'dogum_tarihi', 'dob']:
+                        age_col = col; break
+                if not age_col:
+                    for col in df_yas.columns:
+                        if 'age' in col or 'born' in col or 'yas' in col or 'yaş' in col:
+                            age_col = col; break
+                            
+                if player_col and age_col:
+                    df_yas['merge_key'] = df_yas[player_col].apply(super_temizle)
+                    
+                    bugun = pd.to_datetime("today")
+                    if 'born' in age_col or 'doğum' in age_col:
+                        df_yas['hesaplanan_yas'] = bugun.year - pd.to_numeric(df_yas[age_col], errors='coerce')
+                    elif 'date' in age_col or 'tarih' in age_col or 'dob' in age_col:
+                        # HATA BURADAYDI! Amerikan formatı (Ay/Gün/Yıl) olduğu için dayfirst=True kaldırıldı.
+                        df_yas[age_col] = pd.to_datetime(df_yas[age_col], errors='coerce')
+                        df_yas['hesaplanan_yas'] = (bugun - df_yas[age_col]).dt.days // 365
+                    else:
+                        df_yas['hesaplanan_yas'] = df_yas[age_col].astype(str).str.split('-').str[0]
+                        df_yas['hesaplanan_yas'] = pd.to_numeric(df_yas['hesaplanan_yas'], errors='coerce')
+                        
+                    yas_sozlugu = dict(zip(df_yas['merge_key'], df_yas['hesaplanan_yas']))
 
         vip_yaslar = {
             'kylianmbappelottin': 27, 'lautaromartinez': 29, 'donyellmalen': 27,
             'yassirzabiri': 21, 'sergiocamello': 25, 'gustavovarela': 21,
             'philliptietz': 29, 'lamineyamal': 19, 'erlinghaaland': 26,
-            'raphinha': 29, 'mariano': 30
+            'raphinha': 29, 'mariano': 30, 'martinsatriano': 23, 
+            'eduexposito': 28, 'lukasucic': 22, 'davidhancko': 26, 'orelmangala': 26
         }
         
         yeni_yaslar = []
@@ -81,6 +115,7 @@ def verileri_hazirla():
                     
         df_istatistik['Age'] = yeni_yaslar
         
+        # 3. KALECİ VERİSİ
         try:
             for enc in ['utf-8-sig', 'windows-1254', 'latin1']:
                 try:
@@ -241,17 +276,15 @@ if not df.empty:
             hover_dict = temel_hover.copy()
             hover_dict['size_tab1'] = False 
             
-            # --- YENİ EKLENTİ: Atılan Gollerin Grafik Üzerinde Görünmesi ---
             if 'goals' in df_tab1.columns:
                 hover_dict['goals'] = True
                 
             fig1 = px.scatter(df_tab1, x='xG_90', y='goals_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab1', size_max=max_baloncuk_boyutu, opacity=0.7,
-                              text='goals' if 'goals' in df_tab1.columns else None, # Golleri metin olarak ekle
+                              text='goals' if 'goals' in df_tab1.columns else None,
                               labels={'xG_90': 'Beklenen Gol (xG) - 90dk', 'goals_90': 'Atılan Gol - 90dk', 'goals': 'Toplam Gol'})
             
-            # Metinlerin hizalamasını ve boyutunu ayarla
             fig1.update_traces(textposition='top center', textfont=dict(color='white', size=11))
             st.plotly_chart(fig1, use_container_width=True)
 
@@ -365,10 +398,8 @@ if not df.empty:
     gosterilecek_kolonlar = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'xG_90', 'xA_90', 'goals_90', 'assists_90', 'save_percent', 'ga90', 'cs']
     mevcut_kolonlar = [col for col in gosterilecek_kolonlar if col and col in df_filtrelenmis.columns]
     
-    # --- YENİ EKLENTİ: Ekranda Çirkin 'None' Yazmasını Engelle ---
     df_gosterim = df_filtrelenmis[mevcut_kolonlar].copy()
     if 'Age' in df_gosterim.columns:
-        # Yaşı boş olanları -1 yap, stringe çevir ve ekranda 'Bilinmiyor' olarak göster
         df_gosterim['Age'] = df_gosterim['Age'].fillna(-1).astype(int).astype(str).replace('-1', 'Bilinmiyor')
     
     formatlanacak_kolonlar = [col for col in ['xG_90', 'xA_90', 'goals_90', 'assists_90', 'ga90'] if col in mevcut_kolonlar]
