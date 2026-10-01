@@ -30,7 +30,6 @@ def verileri_hazirla():
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_istatistik['merge_key'] = df_istatistik['player'].apply(super_temizle)
         
-        # Gol ve Asist kolonlarını tam sayı (integer) formatına garanti alalım
         if 'goals' in df_istatistik.columns:
             df_istatistik['goals'] = pd.to_numeric(df_istatistik['goals'], errors='coerce').fillna(0).astype(int)
         if 'assists' in df_istatistik.columns:
@@ -94,6 +93,7 @@ def verileri_hazirla():
                         
                     yas_sozlugu = dict(zip(df_yas['merge_key'], df_yas['hesaplanan_yas']))
 
+        # Karius ve Palmisani gibi kaleciler eklendi
         vip_yaslar = {
             'kylianmbappelottin': 27, 'lautaromartinez': 29, 'donyellmalen': 27,
             'yassirzabiri': 21, 'sergiocamello': 25, 'gustavovarela': 21,
@@ -101,7 +101,7 @@ def verileri_hazirla():
             'raphinha': 29, 'mariano': 30, 'martinsatriano': 23, 
             'eduexposito': 28, 'lukasucic': 22, 'davidhancko': 26, 'orelmangala': 26,
             'ximonavarro': 36, 'djenedakonam': 34, 'papealassanegueye': 27,
-            'giacomoquagliata': 26
+            'giacomoquagliata': 26, 'loriskarius': 33, 'lorenzopalmisani': 22
         }
         
         yeni_yaslar = []
@@ -122,7 +122,8 @@ def verileri_hazirla():
                             break
                             
                 if not bulundu:
-                    en_iyi_eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.6)
+                    # Eşik tekrar GÜVENLİ SINIR olan %80'e çekildi (Sahte atamalar engellendi)
+                    en_iyi_eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.80)
                     if en_iyi_eslesme and pd.notna(yas_sozlugu[en_iyi_eslesme[0]]):
                         yeni_yaslar.append(yas_sozlugu[en_iyi_eslesme[0]])
                     else:
@@ -160,8 +161,13 @@ def verileri_hazirla():
             
             if 'is_gk' in df_istatistik.columns:
                 df_istatistik.loc[df_istatistik['is_gk'] == True, 'position'] = 'GK'
+            
+            # Kaleci yaşlarında öncelik `kaleci_verileri.csv` dosyasına verildi
             if 'age_gk' in df_istatistik.columns:
-                df_istatistik['Age'] = df_istatistik['Age'].fillna(df_istatistik['age_gk'])
+                # Ana yaş kolonu boşsa VEYA oyuncu kaleciyse age_gk verisini kullan
+                df_istatistik['Age'] = df_istatistik.apply(
+                    lambda row: row['age_gk'] if pd.notna(row.get('age_gk')) else row['Age'], axis=1
+                )
         except:
             pass
             
@@ -323,7 +329,6 @@ if not df.empty:
             fig1.update_traces(textposition='top center', textfont=dict(color='white', size=11))
             st.plotly_chart(fig1, use_container_width=True)
             
-            # --- TAB 1 (FORVET) ÖZEL TABLOSU ---
             kolonlar_tab1 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'goals', 'goals_90', 'xG_90']
             siralama_tab1 = ['goals', 'goals_90', 'xG_90']
             sekme_tablosu_ciz(df_tab1, kolonlar_tab1, siralama_tab1)
@@ -344,7 +349,6 @@ if not df.empty:
             hover_dict = temel_hover.copy()
             hover_dict['size_tab2'] = False
             
-            # --- YENİ EKLENTİ: Asistlerin Grafikte Görünmesi ---
             if 'assists' in df_tab2.columns:
                 hover_dict['assists'] = True
                 
@@ -357,7 +361,6 @@ if not df.empty:
             fig2.update_traces(textposition='top center', textfont=dict(color='white', size=11))
             st.plotly_chart(fig2, use_container_width=True)
             
-            # --- TAB 2 (OYUN KURUCU) ÖZEL TABLOSU ---
             kolonlar_tab2 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'assists', 'assists_90', 'xA_90']
             siralama_tab2 = ['assists', 'assists_90', 'xA_90']
             sekme_tablosu_ciz(df_tab2, kolonlar_tab2, siralama_tab2)
@@ -383,7 +386,6 @@ if not df.empty:
                               labels={'xGBuildup_90': 'Oyun Kurulumu (xGBuildup) - 90dk', 'xGChain_90': 'Hücum Katkısı (xGChain) - 90dk'})
             st.plotly_chart(fig3, use_container_width=True)
             
-            # --- TAB 3 (DEFANS/ORTA SAHA) ÖZEL TABLOSU ---
             kolonlar_tab3 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'xGBuildup_90', 'xGChain_90']
             siralama_tab3 = ['xGBuildup_90', 'xGChain_90']
             sekme_tablosu_ciz(df_tab3, kolonlar_tab3, siralama_tab3)
@@ -409,7 +411,6 @@ if not df.empty:
                                   labels={'save_percent': 'Kurtarış Yüzdesi (%)', 'ga90': 'Yediği Gol (GA) - 90dk', 'cs': 'Clean Sheet'})
                 st.plotly_chart(fig_gk, use_container_width=True)
                 
-                # --- TAB 4 (KALECİ) ÖZEL TABLOSU ---
                 kolonlar_tab4 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'saves', 'save_percent', 'ga90', 'cs']
                 siralama_tab4 = ['save_percent', 'saves']
                 sekme_tablosu_ciz(df_gk, kolonlar_tab4, siralama_tab4)
