@@ -30,6 +30,12 @@ def verileri_hazirla():
         df_istatistik.columns = [col.strip().lower() for col in df_istatistik.columns]
         df_istatistik['merge_key'] = df_istatistik['player'].apply(super_temizle)
         
+        # Gol ve Asist kolonlarını tam sayı (integer) formatına garanti alalım
+        if 'goals' in df_istatistik.columns:
+            df_istatistik['goals'] = pd.to_numeric(df_istatistik['goals'], errors='coerce').fillna(0).astype(int)
+        if 'assists' in df_istatistik.columns:
+            df_istatistik['assists'] = pd.to_numeric(df_istatistik['assists'], errors='coerce').fillna(0).astype(int)
+        
         # 2. AKILLI YAŞ OKUYUCU
         df_yas = pd.DataFrame()
         yas_dosyasi = None
@@ -116,13 +122,11 @@ def verileri_hazirla():
                             break
                             
                 if not bulundu:
-                    # Eşik değeri %60'a düşürüldü ki en ufak benzerlikte bile yakalasın
                     en_iyi_eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.6)
                     if en_iyi_eslesme and pd.notna(yas_sozlugu[en_iyi_eslesme[0]]):
                         yeni_yaslar.append(yas_sozlugu[en_iyi_eslesme[0]])
                     else:
-                        # SON SİGORTA: Hiçbir şekilde bulunamazsa sistemin çökmemesi ve filtrelerin bozulmaması için ortalama yaş (25) atanır
-                        yeni_yaslar.append(25)
+                        yeni_yaslar.append(pd.NA)
                     
         df_istatistik['Age'] = yeni_yaslar
         
@@ -205,6 +209,26 @@ def verileri_hazirla():
         return pd.DataFrame()
 
 df = verileri_hazirla()
+
+# --- SEKME İÇİ DİNAMİK TABLO ÇİZDİRİCİ ---
+def sekme_tablosu_ciz(df_tab, kolonlar, sort_cols):
+    if df_tab.empty:
+        return
+    mevcut_kolonlar = [c for c in kolonlar if c and c in df_tab.columns]
+    df_gosterim = df_tab[mevcut_kolonlar].copy()
+    mevcut_sort = [c for c in sort_cols if c in df_gosterim.columns]
+    
+    if mevcut_sort:
+        df_gosterim = df_gosterim.sort_values(by=mevcut_sort, ascending=[False]*len(mevcut_sort))
+        
+    if 'Age' in df_gosterim.columns:
+        df_gosterim['Age'] = df_gosterim['Age'].apply(lambda x: '-' if pd.isna(x) else int(x))
+        
+    format_dict = {col: '{:.2f}' for col in ['xG_90', 'xA_90', 'goals_90', 'assists_90', 'ga90', 'xGBuildup_90', 'xGChain_90', 'save_percent'] if col in df_gosterim.columns}
+    
+    st.markdown("---")
+    st.markdown(f"**📋 İlgili Mevki Tablosu ({len(df_gosterim)} Oyuncu)** - *Sadece mevkiye özel veriler gösterilmektedir.*")
+    st.dataframe(df_gosterim.style.format(format_dict))
 
 if not df.empty:
     st.sidebar.header("🔍 Filtreleme Seçenekleri")
@@ -298,6 +322,11 @@ if not df.empty:
             
             fig1.update_traces(textposition='top center', textfont=dict(color='white', size=11))
             st.plotly_chart(fig1, use_container_width=True)
+            
+            # --- TAB 1 (FORVET) ÖZEL TABLOSU ---
+            kolonlar_tab1 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'goals', 'goals_90', 'xG_90']
+            siralama_tab1 = ['goals', 'goals_90', 'xG_90']
+            sekme_tablosu_ciz(df_tab1, kolonlar_tab1, siralama_tab1)
 
     with tab2:
         st.subheader("Asist vs xA (90 Dakika Başına) - Kanatlar ve 10 Numaralar (W, MF)")
@@ -314,11 +343,24 @@ if not df.empty:
         if not df_tab2.empty:
             hover_dict = temel_hover.copy()
             hover_dict['size_tab2'] = False
+            
+            # --- YENİ EKLENTİ: Asistlerin Grafikte Görünmesi ---
+            if 'assists' in df_tab2.columns:
+                hover_dict['assists'] = True
+                
             fig2 = px.scatter(df_tab2, x='xA_90', y='assists_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
                               size='size_tab2', size_max=max_baloncuk_boyutu, opacity=0.7,
-                              labels={'xA_90': 'Beklenen Asist (xA) - 90dk', 'assists_90': 'Yapılan Asist - 90dk'})
+                              text='assists' if 'assists' in df_tab2.columns else None,
+                              labels={'xA_90': 'Beklenen Asist (xA) - 90dk', 'assists_90': 'Yapılan Asist - 90dk', 'assists': 'Toplam Asist'})
+                              
+            fig2.update_traces(textposition='top center', textfont=dict(color='white', size=11))
             st.plotly_chart(fig2, use_container_width=True)
+            
+            # --- TAB 2 (OYUN KURUCU) ÖZEL TABLOSU ---
+            kolonlar_tab2 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'assists', 'assists_90', 'xA_90']
+            siralama_tab2 = ['assists', 'assists_90', 'xA_90']
+            sekme_tablosu_ciz(df_tab2, kolonlar_tab2, siralama_tab2)
 
     with tab3:
         st.subheader("xGChain vs xGBuildup (90 Dakika Başına) - Orta Saha ve Defans (MF, DF)")
@@ -340,6 +382,11 @@ if not df.empty:
                               size='size_tab3', size_max=max_baloncuk_boyutu, opacity=0.7,
                               labels={'xGBuildup_90': 'Oyun Kurulumu (xGBuildup) - 90dk', 'xGChain_90': 'Hücum Katkısı (xGChain) - 90dk'})
             st.plotly_chart(fig3, use_container_width=True)
+            
+            # --- TAB 3 (DEFANS/ORTA SAHA) ÖZEL TABLOSU ---
+            kolonlar_tab3 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'xGBuildup_90', 'xGChain_90']
+            siralama_tab3 = ['xGBuildup_90', 'xGChain_90']
+            sekme_tablosu_ciz(df_tab3, kolonlar_tab3, siralama_tab3)
 
     with tab4:
         st.subheader("Kurtarış Yüzdesi vs Yediği Gol (90dk) - Sadece Kaleciler (GK)")
@@ -361,6 +408,11 @@ if not df.empty:
                                   size='size_tab4', size_max=max_baloncuk_boyutu, opacity=0.7,
                                   labels={'save_percent': 'Kurtarış Yüzdesi (%)', 'ga90': 'Yediği Gol (GA) - 90dk', 'cs': 'Clean Sheet'})
                 st.plotly_chart(fig_gk, use_container_width=True)
+                
+                # --- TAB 4 (KALECİ) ÖZEL TABLOSU ---
+                kolonlar_tab4 = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'saves', 'save_percent', 'ga90', 'cs']
+                siralama_tab4 = ['save_percent', 'saves']
+                sekme_tablosu_ciz(df_gk, kolonlar_tab4, siralama_tab4)
             elif secili_mevki == 'GK':
                 st.info("Kaleci verileri bulunamadı veya oyuncu eşleşmedi.")
         else:
@@ -390,29 +442,3 @@ if not df.empty:
                     title=dict(text=f"<b>{secilen_oyuncu}</b> - Profil Analizi", x=0.5, font=dict(size=20))
                 )
                 st.plotly_chart(fig4, use_container_width=True)
-
-    st.markdown("---")
-    st.subheader(f"📋 Seçili Filtrelere Göre Oyuncu Listesi ({len(df_filtrelenmis)} Oyuncu)")
-    
-    if secili_mevki == 'GK' and 'save_percent' in df_filtrelenmis.columns:
-        df_filtrelenmis = df_filtrelenmis.sort_values(by='save_percent', ascending=False)
-    elif secili_mevki == 'FW' and 'goals_90' in df_filtrelenmis.columns:
-        df_filtrelenmis = df_filtrelenmis.sort_values(by=['goals_90', 'xG_90'], ascending=[False, False])
-    elif secili_mevki == 'W' and 'assists_90' in df_filtrelenmis.columns:
-        df_filtrelenmis = df_filtrelenmis.sort_values(by=['assists_90', 'xA_90'], ascending=[False, False])
-    elif secili_mevki in ['MF', 'DF'] and 'xGBuildup_90' in df_filtrelenmis.columns:
-        df_filtrelenmis = df_filtrelenmis.sort_values(by=['xGBuildup_90', 'xGChain_90'], ascending=[False, False])
-    else:
-        if mevcut_sure and mevcut_sure in df_filtrelenmis.columns:
-            df_filtrelenmis = df_filtrelenmis.sort_values(by=mevcut_sure, ascending=False)
-            
-    gosterilecek_kolonlar = ['player', takim_kolonu, 'league', 'Age', 'sade_pozisyon', mevcut_sure, 'xG_90', 'xA_90', 'goals_90', 'assists_90', 'save_percent', 'ga90', 'cs']
-    mevcut_kolonlar = [col for col in gosterilecek_kolonlar if col and col in df_filtrelenmis.columns]
-    
-    df_gosterim = df_filtrelenmis[mevcut_kolonlar].copy()
-    if 'Age' in df_gosterim.columns:
-        # Artık ekranda asla 'Bilinmiyor' kalmayacak, sigorta mekanizması devreye girdi
-        df_gosterim['Age'] = df_gosterim['Age'].fillna(25).astype(int)
-    
-    formatlanacak_kolonlar = [col for col in ['xG_90', 'xA_90', 'goals_90', 'assists_90', 'ga90'] if col in mevcut_kolonlar]
-    st.dataframe(df_gosterim.style.format({col: '{:.2f}' for col in formatlanacak_kolonlar}))
