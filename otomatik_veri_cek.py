@@ -18,7 +18,6 @@ def understat_verilerini_cek():
     sezon = '2026' 
     tum_oyuncular = []
     
-    # Gerçek bir tarayıcı (Chrome) taklidi yapan Scraper oluşturuyoruz
     scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
     
     for lig_kodu, lig_adi in ligler.items():
@@ -29,7 +28,9 @@ def understat_verilerini_cek():
             response = scraper.get(url)
             
             if response.status_code == 200:
-                match = re.search(r"var playersData\s*=\s*JSON\.parse\('([^']+)'\);", response.text)
+                # KRİTİK DÜZELTME: [^']+ yerine .*? kullanıldı ki N'Golo Kanté gibi isimlerdeki kesme işaretleri (apostrof) kodu patlatmasın!
+                match = re.search(r"playersData\s*=\s*JSON\.parse\('(.*?)'\)", response.text)
+                
                 if match:
                     encoded_data = match.group(1)
                     decoded_data = codecs.decode(encoded_data, 'unicode_escape')
@@ -42,9 +43,10 @@ def understat_verilerini_cek():
                     tum_oyuncular.extend(oyuncu_verisi)
                     print(f"✅ {lig_adi} başarıyla çekildi. ({len(oyuncu_verisi)} oyuncu)")
                 else:
-                    print(f"❌ {lig_adi} için JSON bulunamadı! Site yapısı değişmiş olabilir.")
+                    # Eğer bulamazsa sitenin bize ne döndürdüğünü görmek için ilk 150 karakterini basıyoruz
+                    print(f"❌ {lig_adi} için JSON bulunamadı! Sayfanın başı: {response.text[:150]}")
             else:
-                print(f"❌ HTTP Hata kodu: {response.status_code} - Güvenlik duvarı engeli olabilir.")
+                print(f"❌ HTTP Hata kodu: {response.status_code}")
                 
         except Exception as e:
             print(f"⚠️ {lig_adi} hatası: {e}")
