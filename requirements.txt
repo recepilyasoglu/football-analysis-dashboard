@@ -3,3 +3,4 @@ pandas
 plotly
 soccerdata
 cloudscraper
+curl_cffi
