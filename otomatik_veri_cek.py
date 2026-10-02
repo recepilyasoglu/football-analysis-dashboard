@@ -1,6 +1,7 @@
 import cloudscraper
 import re
 import json
+import codecs
 import pandas as pd
 from datetime import datetime
 
@@ -17,6 +18,7 @@ def understat_verilerini_cek():
     sezon = '2026' 
     tum_oyuncular = []
     
+    # Gerçek tarayıcı kimliği
     scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
     
     for lig_kodu, lig_adi in ligler.items():
@@ -27,31 +29,47 @@ def understat_verilerini_cek():
             response = scraper.get(url)
             
             if response.status_code == 200:
-                # BULDZER REGEX: Boşluk, alt satır, tırnak fark etmeksizin acımadan veriyi kazar!
-                match = re.search(r"playersData\s*=\s*JSON\.parse\(\s*['\"](.*?)['\"]\s*\)", response.text, re.IGNORECASE | re.DOTALL)
+                html = response.text
+                oyuncu_verisi = None
                 
-                if match:
-                    encoded_data = match.group(1)
-                    try:
-                        # Hex şifreleri en güvenli yöntemle çözüyoruz (\x22 -> ")
-                        decoded_data = encoded_data.encode('utf-8').decode('unicode_escape')
-                        oyuncu_verisi = json.loads(decoded_data)
-                        
-                        for oyuncu in oyuncu_verisi:
-                            oyuncu['league'] = lig_adi
-                            oyuncu['player'] = oyuncu.pop('player_name', None)
+                # Sadece <script> etiketlerinin içini alıyoruz (Sayfanın geri kalanıyla ilgilenmiyoruz)
+                script_blocks = re.findall(r"<script.*?>(.*?)</script>", html, re.DOTALL | re.IGNORECASE)
+                
+                for script in script_blocks:
+                    if "var playersData" in script:
+                        try:
+                            # 1. EN GÜÇLÜ YÖNTEM: Makasla Kesme (Regex Yok!)
+                            if "JSON.parse('" in script:
+                                raw_data = script.split("JSON.parse('")[1].split("')")[0]
+                                decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
+                                oyuncu_verisi = json.loads(decoded_data)
+                                break
                             
-                        tum_oyuncular.extend(oyuncu_verisi)
-                        print(f"✅ {lig_adi} başarıyla çekildi. ({len(oyuncu_verisi)} oyuncu)")
-                    except Exception as json_err:
-                        print(f"❌ {lig_adi} için Şifre Çözme Hatası: {json_err}")
-                else:
-                    print(f"❌ {lig_adi} için Regex eşleşmedi! Veri sayfa içinde bulunamadı.")
+                            elif 'JSON.parse("' in script:
+                                raw_data = script.split('JSON.parse("')[1].split('")')[0]
+                                decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
+                                oyuncu_verisi = json.loads(decoded_data)
+                                break
+                                
+                            else:
+                                # DEDEKTİF MODU: Site yapısı değiştiyse bize o satırı göster!
+                                print(f"🔍 DEDEKTİF: Format değişmiş! İşte veri satırı: {script.strip()[:200]}")
+                        except Exception as parse_err:
+                            print(f"❌ {lig_adi} Şifre Çözme Hatası: {parse_err}")
+                
+                if oyuncu_verisi:
+                    for oyuncu in oyuncu_verisi:
+                        oyuncu['league'] = lig_adi
+                        oyuncu['player'] = oyuncu.pop('player_name', None)
+                    tum_oyuncular.extend(oyuncu_verisi)
+                    print(f"✅ {lig_adi} BAŞARIYLA ÇEKİLDİ! ({len(oyuncu_verisi)} oyuncu)")
+                elif not oyuncu_verisi and "DEDEKTİF" not in locals():
+                    print(f"❌ {lig_adi} için HTML'de 'playersData' etiketi hiç bulunamadı!")
             else:
                 print(f"❌ HTTP Hata kodu: {response.status_code}")
                 
         except Exception as e:
-            print(f"⚠️️ {lig_adi} hatası: {e}")
+            print(f"⚠ {lig_adi} Bağlantı hatası: {e}")
             
     # GÜVENLİK SİGORTASI
     if not tum_oyuncular:
