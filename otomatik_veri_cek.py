@@ -1,7 +1,6 @@
 import cloudscraper
 import re
 import json
-import codecs
 import pandas as pd
 from datetime import datetime
 
@@ -28,28 +27,31 @@ def understat_verilerini_cek():
             response = scraper.get(url)
             
             if response.status_code == 200:
-                # KRİTİK DÜZELTME: [^']+ yerine .*? kullanıldı ki N'Golo Kanté gibi isimlerdeki kesme işaretleri (apostrof) kodu patlatmasın!
-                match = re.search(r"playersData\s*=\s*JSON\.parse\('(.*?)'\)", response.text)
+                # BULDZER REGEX: Boşluk, alt satır, tırnak fark etmeksizin acımadan veriyi kazar!
+                match = re.search(r"playersData\s*=\s*JSON\.parse\(\s*['\"](.*?)['\"]\s*\)", response.text, re.IGNORECASE | re.DOTALL)
                 
                 if match:
                     encoded_data = match.group(1)
-                    decoded_data = codecs.decode(encoded_data, 'unicode_escape')
-                    oyuncu_verisi = json.loads(decoded_data)
-                    
-                    for oyuncu in oyuncu_verisi:
-                        oyuncu['league'] = lig_adi
-                        oyuncu['player'] = oyuncu.pop('player_name', None)
+                    try:
+                        # Hex şifreleri en güvenli yöntemle çözüyoruz (\x22 -> ")
+                        decoded_data = encoded_data.encode('utf-8').decode('unicode_escape')
+                        oyuncu_verisi = json.loads(decoded_data)
                         
-                    tum_oyuncular.extend(oyuncu_verisi)
-                    print(f"✅ {lig_adi} başarıyla çekildi. ({len(oyuncu_verisi)} oyuncu)")
+                        for oyuncu in oyuncu_verisi:
+                            oyuncu['league'] = lig_adi
+                            oyuncu['player'] = oyuncu.pop('player_name', None)
+                            
+                        tum_oyuncular.extend(oyuncu_verisi)
+                        print(f"✅ {lig_adi} başarıyla çekildi. ({len(oyuncu_verisi)} oyuncu)")
+                    except Exception as json_err:
+                        print(f"❌ {lig_adi} için Şifre Çözme Hatası: {json_err}")
                 else:
-                    # Eğer bulamazsa sitenin bize ne döndürdüğünü görmek için ilk 150 karakterini basıyoruz
-                    print(f"❌ {lig_adi} için JSON bulunamadı! Sayfanın başı: {response.text[:150]}")
+                    print(f"❌ {lig_adi} için Regex eşleşmedi! Veri sayfa içinde bulunamadı.")
             else:
                 print(f"❌ HTTP Hata kodu: {response.status_code}")
                 
         except Exception as e:
-            print(f"⚠️ {lig_adi} hatası: {e}")
+            print(f"⚠️️ {lig_adi} hatası: {e}")
             
     # GÜVENLİK SİGORTASI
     if not tum_oyuncular:
