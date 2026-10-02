@@ -7,6 +7,7 @@ import unicodedata
 import re
 import os
 import difflib
+import numpy as np # BENZERLİK MOTORU İÇİN EKLENDİ
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Scout Pano", layout="wide")
@@ -93,7 +94,6 @@ def verileri_hazirla():
                         
                     yas_sozlugu = dict(zip(df_yas['merge_key'], df_yas['hesaplanan_yas']))
 
-        # Karius ve Palmisani gibi kaleciler eklendi
         vip_yaslar = {
             'kylianmbappelottin': 27, 'lautaromartinez': 29, 'donyellmalen': 27,
             'yassirzabiri': 21, 'sergiocamello': 25, 'gustavovarela': 21,
@@ -122,7 +122,6 @@ def verileri_hazirla():
                             break
                             
                 if not bulundu:
-                    # Eşik tekrar GÜVENLİ SINIR olan %80'e çekildi (Sahte atamalar engellendi)
                     en_iyi_eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.80)
                     if en_iyi_eslesme and pd.notna(yas_sozlugu[en_iyi_eslesme[0]]):
                         yeni_yaslar.append(yas_sozlugu[en_iyi_eslesme[0]])
@@ -162,9 +161,7 @@ def verileri_hazirla():
             if 'is_gk' in df_istatistik.columns:
                 df_istatistik.loc[df_istatistik['is_gk'] == True, 'position'] = 'GK'
             
-            # Kaleci yaşlarında öncelik `kaleci_verileri.csv` dosyasına verildi
             if 'age_gk' in df_istatistik.columns:
-                # Ana yaş kolonu boşsa VEYA oyuncu kaleciyse age_gk verisini kullan
                 df_istatistik['Age'] = df_istatistik.apply(
                     lambda row: row['age_gk'] if pd.notna(row.get('age_gk')) else row['Age'], axis=1
                 )
@@ -216,6 +213,32 @@ def verileri_hazirla():
 
 df = verileri_hazirla()
 
+# --- TABLOLAR İÇİN DİNAMİK RENKLENDİRME (Koşullu Biçimlendirme) ---
+def dinamik_renklendir(row):
+    styles = [''] * len(row)
+    # Bitiricilik Performansı (Attığı Gol vs Beklenen Gol)
+    if 'goals_90' in row.index and 'xG_90' in row.index:
+        try:
+            fark_g = float(row['goals_90']) - float(row['xG_90'])
+            idx_g = row.index.get_loc('goals_90')
+            if fark_g > 0.15: # Beklenenden çok atıyorsa YEŞİL
+                styles[idx_g] = 'background-color: rgba(39, 174, 96, 0.4)'
+            elif fark_g < -0.15: # Pozisyonları harcıyorsa KIRMIZI
+                styles[idx_g] = 'background-color: rgba(231, 76, 60, 0.4)'
+        except: pass
+        
+    # Yaratıcılık Performansı (Yaptığı Asist vs Beklenen Asist)
+    if 'assists_90' in row.index and 'xA_90' in row.index:
+        try:
+            fark_a = float(row['assists_90']) - float(row['xA_90'])
+            idx_a = row.index.get_loc('assists_90')
+            if fark_a > 0.10: # Beklenenden çok asist yapıyorsa YEŞİL
+                styles[idx_a] = 'background-color: rgba(39, 174, 96, 0.4)'
+            elif fark_a < -0.10: # Arkadaşları paslarını atamıyorsa veya kötü pas atıyorsa KIRMIZI
+                styles[idx_a] = 'background-color: rgba(231, 76, 60, 0.4)'
+        except: pass
+    return styles
+
 # --- SEKME İÇİ DİNAMİK TABLO ÇİZDİRİCİ ---
 def sekme_tablosu_ciz(df_tab, kolonlar, sort_cols):
     if df_tab.empty:
@@ -233,8 +256,8 @@ def sekme_tablosu_ciz(df_tab, kolonlar, sort_cols):
     format_dict = {col: '{:.2f}' for col in ['xG_90', 'xA_90', 'goals_90', 'assists_90', 'ga90', 'xGBuildup_90', 'xGChain_90', 'save_percent'] if col in df_gosterim.columns}
     
     st.markdown("---")
-    st.markdown(f"**📋 İlgili Mevki Tablosu ({len(df_gosterim)} Oyuncu)** - *Sadece mevkiye özel veriler gösterilmektedir.*")
-    st.dataframe(df_gosterim.style.format(format_dict))
+    st.markdown(f"**📋 İlgili Mevki Tablosu ({len(df_gosterim)} Oyuncu)** - *Beklenenden iyi performans gösterenler <span style='color:green'>YEŞİL</span>, kötü performans gösterenler <span style='color:red'>KIRMIZI</span> ile işaretlenmiştir.*", unsafe_allow_html=True)
+    st.dataframe(df_gosterim.style.format(format_dict).apply(dinamik_renklendir, axis=1))
 
 if not df.empty:
     st.sidebar.header("🔍 Filtreleme Seçenekleri")
@@ -282,7 +305,7 @@ if not df.empty:
         "10 Numaralar & Kanatlar", 
         "Gizli Kahramanlar (xGBuildup)", 
         "🧤 Eldivenler (Kaleciler)", 
-        "🎯 Oyuncu Analiz Radarı"
+        "🎯 Profil Analizi & Benzerlik"
     ])
 
     df_filtrelenmis['xG_90'] = pd.to_numeric(df_filtrelenmis['xG_90'], errors='coerce').fillna(0)
@@ -316,9 +339,7 @@ if not df.empty:
         if not df_tab1.empty:
             hover_dict = temel_hover.copy()
             hover_dict['size_tab1'] = False 
-            
-            if 'goals' in df_tab1.columns:
-                hover_dict['goals'] = True
+            if 'goals' in df_tab1.columns: hover_dict['goals'] = True
                 
             fig1 = px.scatter(df_tab1, x='xG_90', y='goals_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
@@ -348,9 +369,7 @@ if not df.empty:
         if not df_tab2.empty:
             hover_dict = temel_hover.copy()
             hover_dict['size_tab2'] = False
-            
-            if 'assists' in df_tab2.columns:
-                hover_dict['assists'] = True
+            if 'assists' in df_tab2.columns: hover_dict['assists'] = True
                 
             fig2 = px.scatter(df_tab2, x='xA_90', y='assists_90', hover_name='player',
                               hover_data=hover_dict, color=takim_kolonu,
@@ -420,9 +439,9 @@ if not df.empty:
             st.warning("Verinizde pozisyon kolonu bulunamadı.")
 
     with tab5:
-        st.subheader("Bireysel Profil Analizi")
+        st.subheader("Bireysel Profil Analizi ve Benzerlik Motoru")
         if not df_filtrelenmis.empty:
-            secilen_oyuncu = st.selectbox("Detaylı radar analizi için listeden bir oyuncu seçin:", df_filtrelenmis['player'].unique())
+            secilen_oyuncu = st.selectbox("Detaylı analiz için listeden bir oyuncu seçin:", df_filtrelenmis['player'].unique())
             
             if secilen_oyuncu:
                 oyuncu_verisi = df_filtrelenmis[df_filtrelenmis['player'] == secilen_oyuncu].iloc[0]
@@ -432,14 +451,53 @@ if not df.empty:
                     oyuncu_verisi.get('shots_90') or 0, oyuncu_verisi.get('key_passes_90') or 0, 
                     oyuncu_verisi.get('xGChain_90') or 0, oyuncu_verisi.get('xGBuildup_90') or 0
                 ]
-                fig4 = go.Figure()
-                fig4.add_trace(go.Scatterpolar(
-                    r=degerler, theta=kategoriler, fill='toself', fillcolor='rgba(0, 204, 150, 0.4)',
-                    line=dict(color='#00cc96', width=2), name=secilen_oyuncu
-                ))
-                fig4.update_layout(
-                    polar=dict(radialaxis=dict(visible=True, showline=False)),
-                    showlegend=False,
-                    title=dict(text=f"<b>{secilen_oyuncu}</b> - Profil Analizi", x=0.5, font=dict(size=20))
-                )
-                st.plotly_chart(fig4, use_container_width=True)
+                
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    fig4 = go.Figure()
+                    fig4.add_trace(go.Scatterpolar(
+                        r=degerler, theta=kategoriler, fill='toself', fillcolor='rgba(0, 204, 150, 0.4)',
+                        line=dict(color='#00cc96', width=2), name=secilen_oyuncu
+                    ))
+                    fig4.update_layout(
+                        polar=dict(radialaxis=dict(visible=True, showline=False)),
+                        showlegend=False,
+                        title=dict(text=f"<b>{secilen_oyuncu}</b> - Profil Radarı", x=0.5, font=dict(size=18))
+                    )
+                    st.plotly_chart(fig4, use_container_width=True)
+                
+                # --- YENİ EKLENTİ: YAPAY ZEKA OYUNCU BENZERLİK MOTORU ---
+                with col2:
+                    st.markdown(f"### 🤖 Benzerlik Motoru")
+                    st.write(f"Oyun stili ve ana istatistikleri **{secilen_oyuncu}** ile en çok eşleşen oyuncular (Aynı mevkide):")
+                    
+                    benzerlik_metrikleri = ['xG_90', 'xA_90', 'shots_90', 'key_passes_90', 'xGChain_90', 'xGBuildup_90']
+                    hedef_mevki = oyuncu_verisi.get('sade_pozisyon')
+                    
+                    df_havuz = df_filtrelenmis[df_filtrelenmis['sade_pozisyon'] == hedef_mevki].copy()
+                    df_havuz = df_havuz.dropna(subset=benzerlik_metrikleri)
+                    
+                    if len(df_havuz) > 1:
+                        # Vektörel Uzay Kurulumu (Min-Max Normalizasyonu)
+                        X = df_havuz[benzerlik_metrikleri].values
+                        X_min = X.min(axis=0)
+                        X_max = X.max(axis=0)
+                        X_norm = (X - X_min) / (X_max - X_min + 1e-9) # Sıfıra bölmeyi engelle
+                        
+                        # Hedef Oyuncu Vektörü
+                        hedef_idx = df_havuz.index.get_loc(oyuncu_verisi.name)
+                        hedef_vektor = X_norm[hedef_idx]
+                        
+                        # Öklid Mesafesi ile Benzerlik Hesabı
+                        mesafeler = np.linalg.norm(X_norm - hedef_vektor, axis=1)
+                        # Maksimum mesafe sqrt(6) civarıdır, bunu 100 üzerinden skora çeviriyoruz
+                        df_havuz['Benzerlik_Skoru'] = 100 - (mesafeler / np.sqrt(len(benzerlik_metrikleri)) * 100)
+                        
+                        # Kendisini listeden çıkar ve en yüksek skorlu 3 kişiyi al
+                        en_benzerler = df_havuz[df_havuz['player'] != secilen_oyuncu].nlargest(3, 'Benzerlik_Skoru')
+                        
+                        for idx, row in en_benzerler.iterrows():
+                            st.success(f"⭐ **{row['player']}** ({row['team']})\n\nSkor: **%{row['Benzerlik_Skoru']:.1f}**")
+                    else:
+                        st.info("Benzerlik motorunu çalıştırmak için bu mevkide yeterli oyuncu verisi bulunamadı.")
