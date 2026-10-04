@@ -32,14 +32,14 @@ def verileri_hazirla():
         sezon = '2026' # Canlı 2026 verisi
         tum_oyuncular = []
 
-        # 👇 BURAYA KENDİ SCRAPERAPI ANAHTARINI YAPIŞTIR 👇
-        SCRAPER_API_KEY = "BURAYA_API_ANAHTARINI_YAPISTIR" 
+    # 👇 API ANAHTARI 👇
+        SCRAPER_API_KEY = "66e0963124cda017fecac0bbba2da732" 
 
         for lig_kodu, lig_adi in ligler.items():
             hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
             
-            # 🔥 ÇÖZÜM: Gerçek insan IP'si ile Cloudflare'i aşıyoruz 🔥
-            api_url = f"http://api.scraperapi.com?api_key={"66e0963124cda017fecac0bbba2da732"}&url={hedef_url}"
+            # 🔥 ÇÖZÜM: Değişkeni süslü parantez içine alıyoruz, ekstra tırnak yok 🔥
+            api_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={hedef_url}"
             
             try:
                 # ScraperAPI'nin IP bulup bağlanması biraz sürebilir, timeout'u 45 saniye yaptık
