@@ -25,21 +25,17 @@ def super_temizle(isim):
     return t
     
 # --- 2. CANLI API VERİ YÜKLEME ---
-@st.cache_data(ttl=43200)
+@st.cache_data(ttl=43200) # Veriyi 12 saatte bir otomatik canlı çeker
 def verileri_hazirla():
     try:
-        # ⚡ HIZLI TEST İÇİN SADECE İNGİLTERE'Yİ BIRAKTIM (Hata ayıklarken 5 ligi beklemeyelim)
-        ligler = {'EPL': 'ENG-Premier League'} 
-        sezon = '2026' 
+        ligler = {'EPL': 'ENG-Premier League', 'La_liga': 'ESP-La Liga', 'Bundesliga': 'GER-Bundesliga', 'Serie_A': 'ITA-Serie A', 'Ligue_1': 'FRA-Ligue 1'}
+        sezon = '2026' # Canlı 2026 verisi
         tum_oyuncular = []
-        hata_loglari = [] # 🕵️‍♂️ Dedektif modumuz: Hataları buraya toplayacağız
 
         SCRAPER_API_KEY = "66e0963124cda017fecac0bbba2da732" 
 
         for lig_kodu, lig_adi in ligler.items():
             hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
-            
-            # Parametreleri dict olarak yollamak URL kaynaklı syntax hatalarını %100 önler
             payload = {'api_key': SCRAPER_API_KEY, 'url': hedef_url}
             
             try:
@@ -47,14 +43,22 @@ def verileri_hazirla():
                 
                 if response.status_code == 200:
                     html = response.text
-                    if "var playersData" in html:
+                    
+                    # 🔥 1. AŞAMA: Zırhlı Buldozer (Boşluk, tab veya isim değişimlerine karşı korumalı)
+                    match = re.search(r"playersData\s*=\s*JSON\.parse\(\s*['\"](.*?)['\"]\s*\)", html)
+                    raw_data = None
+                    
+                    if match:
+                        raw_data = match.group(1)
+                    else:
+                        # 🔥 2. AŞAMA (B planı): Eğer playersData ismini bile silmişlerse, sayfadaki 
+                        # tüm JSON bloklarını bul ve 2.sini (Oyuncu listesini) zorla al!
+                        json_blocks = re.findall(r"JSON\.parse\(\s*['\"](.*?)['\"]\s*\)", html)
+                        if len(json_blocks) >= 2:
+                            raw_data = json_blocks[1] 
+
+                    if raw_data:
                         try:
-                            # Tırnak farklılıklarına karşı zırhlı ayıklayıcı
-                            if "JSON.parse('" in html:
-                                raw_data = html.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
-                            else:
-                                raw_data = html.split("var playersData")[1].split('JSON.parse("')[1].split('")')[0]
-                                
                             decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
                             oyuncu_verisi = json.loads(decoded_data)
 
@@ -63,19 +67,17 @@ def verileri_hazirla():
                                 oyuncu['player'] = oyuncu.pop('player_name', None)
                             tum_oyuncular.extend(oyuncu_verisi)
                         except Exception as e:
-                            hata_loglari.append(f"✂️ Veri Kesme Hatası: {str(e)}")
+                            st.warning(f"⚠️ {lig_adi} verisi çözülemedi: {e}")
                     else:
-                        hata_loglari.append(f"🛑 HTML geldi ama 'playersData' YOK (Captcha'ya takıldık). Sayfa: {html[:250]}")
+                        st.warning(f"⚠️ {lig_adi} için HTML geldi ama JSON tablosu bulunamadı!")
                 else:
-                    hata_loglari.append(f"❌ ScraperAPI Hata {response.status_code}: {response.text[:250]}")
+                    st.warning(f"❌ ScraperAPI Hata {response.status_code} ({lig_adi})")
                     
             except Exception as e:
-                hata_loglari.append(f"🔌 Bağlantı/Zaman Aşımı Hatası: {str(e)}")
+                st.warning(f"🔌 {lig_adi} bağlantı zaman aşımı: {e}")
 
         if not tum_oyuncular:
-            st.error("🚨 İŞTE GERÇEK HATA SEBEBİ (Lütfen bu sarı mesajı bana söyle):")
-            for log in hata_loglari:
-                st.warning(log)
+            st.error("🚨 Hiçbir veri çekilemedi. Lütfen sayfayı yenileyin (Clear Cache yapmayı unutmayın).")
             return pd.DataFrame()
 
         # --- Veri İşleme Adımları ---
