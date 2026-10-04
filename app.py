@@ -9,7 +9,7 @@ import os
 import difflib
 import numpy as np
 import json
-import codecs
+import requests # Standart kütüphane yeterli!
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="Scout Pano", layout="wide")
@@ -24,33 +24,25 @@ def super_temizle(isim):
     t = re.sub(r'[^a-z]', '', t)
     return t
 
-# --- 2. CANLI API VERİ YÜKLEME VE İŞLEME ---
+# --- 2. CANLI API VERİ YÜKLEME ---
 @st.cache_data(ttl=43200) # Veriyi 12 saatte bir otomatik canlı çeker
 def verileri_hazirla():
     try:
-        # --- ADIM 1: CSV YERİNE DOĞRUDAN CANLI VERİ ÇEKİMİ ---
-        try:
-            from curl_cffi import requests as req
-            impersonate = "chrome110"
-        except ImportError:
-            import requests as req
-            impersonate = None
-            
+        # --- ADIM 1: CSV YERİNE PROXY API İLE CANLI VERİ ÇEKİMİ ---
         ligler = {'EPL': 'ENG-Premier League', 'La_liga': 'ESP-La Liga', 'Bundesliga': 'GER-Bundesliga', 'Serie_A': 'ITA-Serie A', 'Ligue_1': 'FRA-Ligue 1'}
-        sezon = '2026' # Canlı 2026 verisi!
+        sezon = '2026' # Canlı 2026 verisi
         tum_oyuncular = []
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
         for lig_kodu, lig_adi in ligler.items():
-            url = f"https://understat.com/league/{lig_kodu}/{sezon}"
+            hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
+            # İŞTE ÇÖZÜM: Cloudflare engelini aşmak için aracı API (Proxy) kullanıyoruz
+            api_url = f"https://api.allorigins.win/raw?url={hedef_url}"
+            
             try:
-                if impersonate:
-                    response = req.get(url, impersonate=impersonate, timeout=20)
-                else:
-                    response = req.get(url, headers=headers, timeout=20)
-
+                response = requests.get(api_url, timeout=30)
+                
                 if response.status_code == 200 and "var playersData" in response.text:
-                    # Regex kullanmadan makasla net kesim
+                    # En risksiz makaslama yöntemi
                     raw_data = response.text.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
                     decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
                     oyuncu_verisi = json.loads(decoded_data)
@@ -60,10 +52,10 @@ def verileri_hazirla():
                         oyuncu['player'] = oyuncu.pop('player_name', None)
                     tum_oyuncular.extend(oyuncu_verisi)
             except Exception:
-                pass # Hata alırsan sessizce diğer lige geç
+                continue
 
         if not tum_oyuncular:
-            st.error("🚨 Canlı veri sağlayıcısına bağlanılamadı. Daha sonra tekrar deneyin.")
+            st.error("🚨 Proxy API üzerinden veri alınamadı. Lütfen sayfayı yenileyin.")
             return pd.DataFrame()
 
         df_istatistik = pd.DataFrame(tum_oyuncular)
@@ -82,7 +74,7 @@ def verileri_hazirla():
         if 'assists' in df_istatistik.columns:
             df_istatistik['assists'] = pd.to_numeric(df_istatistik['assists'], errors='coerce').fillna(0).astype(int)
         
-        # --- ADIM 2: AKILLI YAŞ OKUYUCU (Şimdilik FBref CSV'den okuyor, API'si eklenebilir) ---
+        # --- ADIM 2: AKILLI YAŞ OKUYUCU ---
         df_yas = pd.DataFrame()
         yas_dosyasi = None
         
@@ -131,7 +123,7 @@ def verileri_hazirla():
                     
         df_istatistik['Age'] = yeni_yaslar
         
-        # --- ADIM 3: KALECİ VERİSİ MANTIĞI ---
+        # --- ADIM 3: KALECİ VERİSİ ---
         try:
             df_kaleci = pd.read_csv('kaleci_verileri.csv')
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
