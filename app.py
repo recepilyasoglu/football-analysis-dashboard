@@ -39,7 +39,7 @@ def verileri_hazirla():
             hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
             
             # 🔥 ÇÖZÜM: Gerçek insan IP'si ile Cloudflare'i aşıyoruz 🔥
-            api_url = f"http://api.scraperapi.com?api_key={66e0963124cda017fecac0bbba2da732}&url={hedef_url}"
+            api_url = f"http://api.scraperapi.com?api_key={"66e0963124cda017fecac0bbba2da732"}&url={hedef_url}"
             
             try:
                 # ScraperAPI'nin IP bulup bağlanması biraz sürebilir, timeout'u 45 saniye yaptık
