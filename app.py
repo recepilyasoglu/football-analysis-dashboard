@@ -25,41 +25,57 @@ def super_temizle(isim):
     return t
     
 # --- 2. CANLI API VERİ YÜKLEME ---
-@st.cache_data(ttl=43200) # Veriyi 12 saatte bir otomatik canlı çeker
+@st.cache_data(ttl=43200)
 def verileri_hazirla():
     try:
-        ligler = {'EPL': 'ENG-Premier League', 'La_liga': 'ESP-La Liga', 'Bundesliga': 'GER-Bundesliga', 'Serie_A': 'ITA-Serie A', 'Ligue_1': 'FRA-Ligue 1'}
-        sezon = '2026' # Canlı 2026 verisi
+        # ⚡ HIZLI TEST İÇİN SADECE İNGİLTERE'Yİ BIRAKTIM (Hata ayıklarken 5 ligi beklemeyelim)
+        ligler = {'EPL': 'ENG-Premier League'} 
+        sezon = '2026' 
         tum_oyuncular = []
+        hata_loglari = [] # 🕵️‍♂️ Dedektif modumuz: Hataları buraya toplayacağız
 
-    # 👇 API ANAHTARI 👇
         SCRAPER_API_KEY = "66e0963124cda017fecac0bbba2da732" 
 
         for lig_kodu, lig_adi in ligler.items():
             hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
             
-            # 🔥 ÇÖZÜM: Değişkeni süslü parantez içine alıyoruz, ekstra tırnak yok 🔥
-            api_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={hedef_url}"
+            # Parametreleri dict olarak yollamak URL kaynaklı syntax hatalarını %100 önler
+            payload = {'api_key': SCRAPER_API_KEY, 'url': hedef_url}
             
             try:
-                # ScraperAPI'nin IP bulup bağlanması biraz sürebilir, timeout'u 45 saniye yaptık
-                response = requests.get(api_url, timeout=45)
+                response = requests.get('http://api.scraperapi.com', params=payload, timeout=45)
                 
-                if response.status_code == 200 and "var playersData" in response.text:
-                    # En risksiz makaslama yöntemi
-                    raw_data = response.text.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
-                    decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
-                    oyuncu_verisi = json.loads(decoded_data)
+                if response.status_code == 200:
+                    html = response.text
+                    if "var playersData" in html:
+                        try:
+                            # Tırnak farklılıklarına karşı zırhlı ayıklayıcı
+                            if "JSON.parse('" in html:
+                                raw_data = html.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
+                            else:
+                                raw_data = html.split("var playersData")[1].split('JSON.parse("')[1].split('")')[0]
+                                
+                            decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
+                            oyuncu_verisi = json.loads(decoded_data)
 
-                    for oyuncu in oyuncu_verisi:
-                        oyuncu['league'] = lig_adi
-                        oyuncu['player'] = oyuncu.pop('player_name', None)
-                    tum_oyuncular.extend(oyuncu_verisi)
-            except Exception:
-                continue
+                            for oyuncu in oyuncu_verisi:
+                                oyuncu['league'] = lig_adi
+                                oyuncu['player'] = oyuncu.pop('player_name', None)
+                            tum_oyuncular.extend(oyuncu_verisi)
+                        except Exception as e:
+                            hata_loglari.append(f"✂️ Veri Kesme Hatası: {str(e)}")
+                    else:
+                        hata_loglari.append(f"🛑 HTML geldi ama 'playersData' YOK (Captcha'ya takıldık). Sayfa: {html[:250]}")
+                else:
+                    hata_loglari.append(f"❌ ScraperAPI Hata {response.status_code}: {response.text[:250]}")
+                    
+            except Exception as e:
+                hata_loglari.append(f"🔌 Bağlantı/Zaman Aşımı Hatası: {str(e)}")
 
         if not tum_oyuncular:
-            st.error("🚨 API'den veri alınamadı. API anahtarınızı kontrol edin veya sayfayı yenileyin.")
+            st.error("🚨 İŞTE GERÇEK HATA SEBEBİ (Lütfen bu sarı mesajı bana söyle):")
+            for log in hata_loglari:
+                st.warning(log)
             return pd.DataFrame()
 
         # --- Veri İşleme Adımları ---
