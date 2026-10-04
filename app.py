@@ -36,29 +36,25 @@ def verileri_hazirla():
 
         for lig_kodu, lig_adi in ligler.items():
             hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
-            payload = {'api_key': SCRAPER_API_KEY, 'url': hedef_url}
+            
+            # 🔥 AĞIR SİLAH: 'premium': 'true' ile Cloudflare'in Hayalet Sayfasını delip gerçek Ev IP'si kullanıyoruz! 🔥
+            payload = {'api_key': SCRAPER_API_KEY, 'url': hedef_url, 'premium': 'true'}
             
             try:
-                response = requests.get('http://api.scraperapi.com', params=payload, timeout=45)
+                # Premium IP'lerin bağlanması bazen 30-40 sn sürebilir, zaman aşımını geniş tuttuk
+                response = requests.get('http://api.scraperapi.com', params=payload, timeout=60)
                 
                 if response.status_code == 200:
                     html = response.text
                     
-                    # 🔥 1. AŞAMA: Zırhlı Buldozer (Boşluk, tab veya isim değişimlerine karşı korumalı)
-                    match = re.search(r"playersData\s*=\s*JSON\.parse\(\s*['\"](.*?)['\"]\s*\)", html)
-                    raw_data = None
-                    
-                    if match:
-                        raw_data = match.group(1)
-                    else:
-                        # 🔥 2. AŞAMA (B planı): Eğer playersData ismini bile silmişlerse, sayfadaki 
-                        # tüm JSON bloklarını bul ve 2.sini (Oyuncu listesini) zorla al!
-                        json_blocks = re.findall(r"JSON\.parse\(\s*['\"](.*?)['\"]\s*\)", html)
-                        if len(json_blocks) >= 2:
-                            raw_data = json_blocks[1] 
-
-                    if raw_data:
+                    if "var playersData" in html:
                         try:
+                            # Tırnak farklılıklarına karşı zırhlı ayıklayıcı
+                            if "JSON.parse('" in html:
+                                raw_data = html.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
+                            else:
+                                raw_data = html.split("var playersData")[1].split('JSON.parse("')[1].split('")')[0]
+                                
                             decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
                             oyuncu_verisi = json.loads(decoded_data)
 
@@ -69,7 +65,7 @@ def verileri_hazirla():
                         except Exception as e:
                             st.warning(f"⚠️ {lig_adi} verisi çözülemedi: {e}")
                     else:
-                        st.warning(f"⚠️ {lig_adi} için HTML geldi ama JSON tablosu bulunamadı!")
+                        st.warning(f"🛑 {lig_adi}: Cloudflare bizi hala engelliyor (Premium Proxy'e rağmen)!")
                 else:
                     st.warning(f"❌ ScraperAPI Hata {response.status_code} ({lig_adi})")
                     
@@ -186,7 +182,7 @@ def verileri_hazirla():
     except Exception as e:
         st.error(f"Kritik Hata: {e}")
         return pd.DataFrame()
-
+        
 df = verileri_hazirla()
 
 # --- TABLOLAR İÇİN DİNAMİK RENKLENDİRME ---
