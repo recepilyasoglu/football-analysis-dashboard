@@ -23,6 +23,7 @@ def super_temizle(isim):
     t = t.replace('ı', 'i').replace('ö', 'o').replace('ü', 'u').replace('ş', 's').replace('ğ', 'g').replace('ç', 'c')
     t = re.sub(r'[^a-z]', '', t)
     return t
+    
 # --- 2. CANLI API VERİ YÜKLEME ---
 @st.cache_data(ttl=43200) # Veriyi 12 saatte bir otomatik canlı çeker
 def verileri_hazirla():
@@ -31,39 +32,22 @@ def verileri_hazirla():
         sezon = '2026' # Canlı 2026 verisi
         tum_oyuncular = []
 
+        # 👇 BURAYA KENDİ SCRAPERAPI ANAHTARINI YAPIŞTIR 👇
+        SCRAPER_API_KEY = "BURAYA_API_ANAHTARINI_YAPISTIR" 
+
         for lig_kodu, lig_adi in ligler.items():
             hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
-            html_content = None
             
-            # 🔥 PROXY HAVUZU: Cloudflare engelini aşmak için 3 farklı kapı deniyoruz 🔥
+            # 🔥 ÇÖZÜM: Gerçek insan IP'si ile Cloudflare'i aşıyoruz 🔥
+            api_url = f"http://api.scraperapi.com?api_key={66e0963124cda017fecac0bbba2da732}&url={hedef_url}"
             
-            # Kapı 1: CORSProxy
             try:
-                r1 = requests.get(f"https://corsproxy.io/?{hedef_url}", timeout=15)
-                if r1.status_code == 200 and "var playersData" in r1.text: html_content = r1.text
-            except: pass
-            
-            # Kapı 2: CodeTabs (İlki başarısız olursa)
-            if not html_content:
-                try:
-                    r2 = requests.get(f"https://api.codetabs.com/v1/proxy?quest={hedef_url}", timeout=15)
-                    if r2.status_code == 200 and "var playersData" in r2.text: html_content = r2.text
-                except: pass
+                # ScraperAPI'nin IP bulup bağlanması biraz sürebilir, timeout'u 45 saniye yaptık
+                response = requests.get(api_url, timeout=45)
                 
-            # Kapı 3: AllOrigins JSON (Son çare)
-            if not html_content:
-                try:
-                    r3 = requests.get(f"https://api.allorigins.win/get?url={hedef_url}", timeout=15)
-                    if r3.status_code == 200:
-                        icerik = r3.json().get("contents", "")
-                        if "var playersData" in icerik: html_content = icerik
-                except: pass
-
-            # Eğer 3 kapıdan birinden veri geçmeyi başardıysa:
-            if html_content:
-                try:
-                    # Regex kullanmadan en risksiz makaslama yöntemi
-                    raw_data = html_content.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
+                if response.status_code == 200 and "var playersData" in response.text:
+                    # En risksiz makaslama yöntemi
+                    raw_data = response.text.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
                     decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
                     oyuncu_verisi = json.loads(decoded_data)
 
@@ -71,14 +55,14 @@ def verileri_hazirla():
                         oyuncu['league'] = lig_adi
                         oyuncu['player'] = oyuncu.pop('player_name', None)
                     tum_oyuncular.extend(oyuncu_verisi)
-                except Exception:
-                    continue
+            except Exception:
+                continue
 
         if not tum_oyuncular:
-            st.error("🚨 Cloudflare güvenlik duvarı tüm Proxy kapılarını engelledi. Resmi bir API veya ScraperAPI kullanımı gerekiyor.")
+            st.error("🚨 API'den veri alınamadı. API anahtarınızı kontrol edin veya sayfayı yenileyin.")
             return pd.DataFrame()
 
-        # ... (Veri işleme, yaş hesaplama ve kaleci birleştirme kodları tamamen aynı kalıyor)
+        # --- Veri İşleme Adımları ---
         df_istatistik = pd.DataFrame(tum_oyuncular)
         df_istatistik = df_istatistik.rename(columns={'team_title': 'team', 'time': 'minutes'})
         
@@ -95,7 +79,7 @@ def verileri_hazirla():
         if 'assists' in df_istatistik.columns:
             df_istatistik['assists'] = pd.to_numeric(df_istatistik['assists'], errors='coerce').fillna(0).astype(int)
         
-        # Yaş Okuyucu
+        # --- Yaş ve Kaleci İşlemleri ---
         df_yas = pd.DataFrame()
         yas_dosyasi = None
         for file in os.listdir():
@@ -137,7 +121,6 @@ def verileri_hazirla():
                 else: yeni_yaslar.append(pd.NA)
         df_istatistik['Age'] = yeni_yaslar
         
-        # Kaleci Verisi
         try:
             df_kaleci = pd.read_csv('kaleci_verileri.csv')
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
