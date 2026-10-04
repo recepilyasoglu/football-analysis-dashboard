@@ -23,27 +23,47 @@ def super_temizle(isim):
     t = t.replace('ı', 'i').replace('ö', 'o').replace('ü', 'u').replace('ş', 's').replace('ğ', 'g').replace('ç', 'c')
     t = re.sub(r'[^a-z]', '', t)
     return t
-
 # --- 2. CANLI API VERİ YÜKLEME ---
 @st.cache_data(ttl=43200) # Veriyi 12 saatte bir otomatik canlı çeker
 def verileri_hazirla():
     try:
-        # --- ADIM 1: CSV YERİNE PROXY API İLE CANLI VERİ ÇEKİMİ ---
         ligler = {'EPL': 'ENG-Premier League', 'La_liga': 'ESP-La Liga', 'Bundesliga': 'GER-Bundesliga', 'Serie_A': 'ITA-Serie A', 'Ligue_1': 'FRA-Ligue 1'}
         sezon = '2026' # Canlı 2026 verisi
         tum_oyuncular = []
 
         for lig_kodu, lig_adi in ligler.items():
             hedef_url = f"https://understat.com/league/{lig_kodu}/{sezon}"
-            # İŞTE ÇÖZÜM: Cloudflare engelini aşmak için aracı API (Proxy) kullanıyoruz
-            api_url = f"https://api.allorigins.win/raw?url={hedef_url}"
+            html_content = None
             
+            # 🔥 PROXY HAVUZU: Cloudflare engelini aşmak için 3 farklı kapı deniyoruz 🔥
+            
+            # Kapı 1: CORSProxy
             try:
-                response = requests.get(api_url, timeout=30)
+                r1 = requests.get(f"https://corsproxy.io/?{hedef_url}", timeout=15)
+                if r1.status_code == 200 and "var playersData" in r1.text: html_content = r1.text
+            except: pass
+            
+            # Kapı 2: CodeTabs (İlki başarısız olursa)
+            if not html_content:
+                try:
+                    r2 = requests.get(f"https://api.codetabs.com/v1/proxy?quest={hedef_url}", timeout=15)
+                    if r2.status_code == 200 and "var playersData" in r2.text: html_content = r2.text
+                except: pass
                 
-                if response.status_code == 200 and "var playersData" in response.text:
-                    # En risksiz makaslama yöntemi
-                    raw_data = response.text.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
+            # Kapı 3: AllOrigins JSON (Son çare)
+            if not html_content:
+                try:
+                    r3 = requests.get(f"https://api.allorigins.win/get?url={hedef_url}", timeout=15)
+                    if r3.status_code == 200:
+                        icerik = r3.json().get("contents", "")
+                        if "var playersData" in icerik: html_content = icerik
+                except: pass
+
+            # Eğer 3 kapıdan birinden veri geçmeyi başardıysa:
+            if html_content:
+                try:
+                    # Regex kullanmadan en risksiz makaslama yöntemi
+                    raw_data = html_content.split("var playersData")[1].split("JSON.parse('")[1].split("')")[0]
                     decoded_data = bytes(raw_data, 'utf-8').decode('unicode_escape')
                     oyuncu_verisi = json.loads(decoded_data)
 
@@ -51,13 +71,14 @@ def verileri_hazirla():
                         oyuncu['league'] = lig_adi
                         oyuncu['player'] = oyuncu.pop('player_name', None)
                     tum_oyuncular.extend(oyuncu_verisi)
-            except Exception:
-                continue
+                except Exception:
+                    continue
 
         if not tum_oyuncular:
-            st.error("🚨 Proxy API üzerinden veri alınamadı. Lütfen sayfayı yenileyin.")
+            st.error("🚨 Cloudflare güvenlik duvarı tüm Proxy kapılarını engelledi. Resmi bir API veya ScraperAPI kullanımı gerekiyor.")
             return pd.DataFrame()
 
+        # ... (Veri işleme, yaş hesaplama ve kaleci birleştirme kodları tamamen aynı kalıyor)
         df_istatistik = pd.DataFrame(tum_oyuncular)
         df_istatistik = df_istatistik.rename(columns={'team_title': 'team', 'time': 'minutes'})
         
@@ -74,10 +95,9 @@ def verileri_hazirla():
         if 'assists' in df_istatistik.columns:
             df_istatistik['assists'] = pd.to_numeric(df_istatistik['assists'], errors='coerce').fillna(0).astype(int)
         
-        # --- ADIM 2: AKILLI YAŞ OKUYUCU ---
+        # Yaş Okuyucu
         df_yas = pd.DataFrame()
         yas_dosyasi = None
-        
         for file in os.listdir():
             if file.lower().endswith('oyuncu_dogum_tarihleri.csv'):
                 yas_dosyasi = file
@@ -105,29 +125,22 @@ def verileri_hazirla():
             'kylianmbappelottin': 27, 'lautaromartinez': 29, 'donyellmalen': 27, 'erlinghaaland': 26,
             'lamineyamal': 19, 'raphinha': 29, 'giacomoquagliata': 26, 'loriskarius': 33, 'lorenzopalmisani': 22
         }
-        
         yeni_yaslar = []
         yas_keys = list(yas_sozlugu.keys())
         
         for p in df_istatistik['merge_key']:
-            if p in vip_yaslar:
-                yeni_yaslar.append(vip_yaslar[p])
-            elif p in yas_sozlugu and pd.notna(yas_sozlugu[p]):
-                yeni_yaslar.append(yas_sozlugu[p])
+            if p in vip_yaslar: yeni_yaslar.append(vip_yaslar[p])
+            elif p in yas_sozlugu and pd.notna(yas_sozlugu[p]): yeni_yaslar.append(yas_sozlugu[p])
             else:
                 eslesme = difflib.get_close_matches(p, yas_keys, n=1, cutoff=0.80)
-                if eslesme and pd.notna(yas_sozlugu[eslesme[0]]):
-                    yeni_yaslar.append(yas_sozlugu[eslesme[0]])
-                else:
-                    yeni_yaslar.append(pd.NA)
-                    
+                if eslesme and pd.notna(yas_sozlugu[eslesme[0]]): yeni_yaslar.append(yas_sozlugu[eslesme[0]])
+                else: yeni_yaslar.append(pd.NA)
         df_istatistik['Age'] = yeni_yaslar
         
-        # --- ADIM 3: KALECİ VERİSİ ---
+        # Kaleci Verisi
         try:
             df_kaleci = pd.read_csv('kaleci_verileri.csv')
             df_kaleci.columns = [str(col).strip().lower().replace('%', '_percent') for col in df_kaleci.columns]
-            
             player_col_gk = next((col for col in df_kaleci.columns if 'player' in col or 'oyuncu' in col), None)
             if player_col_gk: df_kaleci.rename(columns={player_col_gk: 'player'}, inplace=True)
                         
@@ -135,18 +148,14 @@ def verileri_hazirla():
             mevcut_k = [c for c in ['merge_key', 'ga', 'ga90', 'saves', 'save_percent', 'cs', 'age'] if c in df_kaleci.columns]
             df_k = df_kaleci[mevcut_k].copy()
             df_k['is_gk'] = True
-            
             if 'age' in df_k.columns:
                 df_k['age_gk'] = pd.to_numeric(df_k['age'], errors='coerce')
                 df_k.drop(columns=['age'], inplace=True)
                 
             df_istatistik = pd.merge(df_istatistik, df_k, on='merge_key', how='left')
-            if 'is_gk' in df_istatistik.columns:
-                df_istatistik.loc[df_istatistik['is_gk'] == True, 'position'] = 'GK'
-            if 'age_gk' in df_istatistik.columns:
-                df_istatistik['Age'] = df_istatistik.apply(lambda row: row['age_gk'] if pd.notna(row.get('age_gk')) else row['Age'], axis=1)
-        except:
-            pass
+            if 'is_gk' in df_istatistik.columns: df_istatistik.loc[df_istatistik['is_gk'] == True, 'position'] = 'GK'
+            if 'age_gk' in df_istatistik.columns: df_istatistik['Age'] = df_istatistik.apply(lambda row: row['age_gk'] if pd.notna(row.get('age_gk')) else row['Age'], axis=1)
+        except: pass
             
         df_istatistik.drop(columns=['merge_key', 'is_gk', 'age_gk'], inplace=True, errors='ignore')
         df_istatistik['Age'] = pd.to_numeric(df_istatistik['Age'], errors='coerce').astype('Int64')
@@ -161,16 +170,14 @@ def verileri_hazirla():
             elif 'D' in p: return 'DF' 
             return 'Diğer'
 
-        if 'position' in df_istatistik.columns:
-             df_istatistik['sade_pozisyon'] = df_istatistik['position'].apply(sade_pozisyon_bul)
+        if 'position' in df_istatistik.columns: df_istatistik['sade_pozisyon'] = df_istatistik['position'].apply(sade_pozisyon_bul)
              
         mevcut_sure = next((col for col in ['time', 'minutes', 'min', 'dakika', 'süre', 'mins'] if col in df_istatistik.columns), None)
         metrikler_map = {'xg': 'xG_90', 'xa': 'xA_90', 'shots': 'shots_90', 'key_passes': 'key_passes_90', 'xgchain': 'xGChain_90', 'xgbuildup': 'xGBuildup_90', 'goals': 'goals_90', 'assists': 'assists_90'}
         
         for ham, p90 in metrikler_map.items():
             if ham in df_istatistik.columns:
-                if mevcut_sure:
-                    df_istatistik[p90] = round(df_istatistik[ham] * (90 / df_istatistik[mevcut_sure].replace(0, 1)), 2)
+                if mevcut_sure: df_istatistik[p90] = round(df_istatistik[ham] * (90 / df_istatistik[mevcut_sure].replace(0, 1)), 2)
                 else: df_istatistik[p90] = df_istatistik[ham]
             else: df_istatistik[p90] = None
 
